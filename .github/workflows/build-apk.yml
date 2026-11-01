@@ -42,13 +42,11 @@ jobs:
           s = p.read_text()
           if "import android.webkit.JavascriptInterface" not in s:
               s = s.replace("import android.webkit.WebChromeClient", "import android.webkit.JavascriptInterface\nimport android.webkit.WebChromeClient", 1)
-          old = """        if (AgentService.isBackendAlive) loadDashboard() else showWelcome()
-          startStatusPolling()"""
+          old = "        if (AgentService.isBackendAlive) loadDashboard() else showWelcome()"
           new = """        if (AgentService.isBackendAlive) loadDashboard() else {
               showWelcome()
               startAgent(silent = true)
-          }
-          startStatusPolling()"""
+          }"""
           if old not in s:
               raise SystemExit("MainActivity 自动启动位置未匹配，停止构建")
           s = s.replace(old, new, 1)
