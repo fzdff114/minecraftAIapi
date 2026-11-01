@@ -21,6 +21,32 @@ jobs:
           unzip -q BlockmateAI-2.0-alpha.4-current.zip
           test -f BlockmateAI-Android/settings.gradle
           test -f BlockmateAI-Android/app/build.gradle
+      - name: Inspect auth and local-service integration
+        working-directory: BlockmateAI-Android
+        run: |
+          {
+            echo "=== SOURCE FILES ==="
+            find app/src/main agent -type f \\( -name '*.kt' -o -name '*.java' -o -name '*.js' -o -name '*.ts' -o -name '*.html' -o -name '*.json' \\) 2>/dev/null | sort
+            echo "=== AUTH / API MATCHES ==="
+            rg -n -C 4 "deviceCode|verificationUri|userCode|microsoft|xbox|auth|login|fetch\\(|/api|127\\.0\\.0\\.1|localhost|startService|startServer" app/src/main agent --glob '*.kt' --glob '*.js' --glob '*.ts' --glob '*.html' --glob '*.json' || true
+            echo "=== MAIN ACTIVITY ==="
+            sed -n '1,280p' app/src/main/java/com/blockmate/ai/MainActivity.kt
+            echo "=== AGENT SERVICE ==="
+            sed -n '1,360p' app/src/main/java/com/blockmate/ai/AgentService.kt
+            echo "=== MANIFEST ==="
+            cat app/src/main/AndroidManifest.xml
+            echo "=== PACKAGE.JSON ==="
+            cat agent/package.json
+          } > auth-source-inspection.txt
+
+      - name: Upload source inspection
+        uses: actions/upload-artifact@v4
+        with:
+          name: BlockmateAI-auth-source-inspection
+          path: BlockmateAI-Android/auth-source-inspection.txt
+          if-no-files-found: error
+          retention-days: 7
+
 
       - name: Repair runtime asset extraction and invoke official Microsoft sign-in
         working-directory: BlockmateAI-Android
