@@ -41,7 +41,7 @@ jobs:
           p = Path("app/src/main/java/com/blockmate/ai/MainActivity.kt")
           s = p.read_text()
           if "import android.webkit.JavascriptInterface" not in s:
-              s = s.replace("import android.webkit.WebChromeClient", "import android.webkit.JavascriptInterface\\nimport android.webkit.WebChromeClient", 1)
+              s = s.replace("import android.webkit.WebChromeClient", "import android.webkit.JavascriptInterface\nimport android.webkit.WebChromeClient", 1)
           marker = "            webChromeClient = WebChromeClient()"
           bridge = """            webChromeClient = WebChromeClient()
                       addJavascriptInterface(object {
@@ -154,7 +154,10 @@ jobs:
 
       - name: Package agent assets
         working-directory: BlockmateAI-Android
-        run: node tools/prepare-agent.mjs
+        run: |
+          node tools/prepare-agent.mjs
+          test -s app/src/main/assets/agent/node_modules/minecraft-data/minecraft-data/data/pc/common/features.json
+          test -s app/src/main/assets/agent/node_modules/minecraft-data/minecraft-data/data/bedrock/common/features.json
 
       - name: Bundle ARM64 Node runtime
         working-directory: BlockmateAI-Android
