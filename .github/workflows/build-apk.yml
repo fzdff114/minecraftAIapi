@@ -82,15 +82,15 @@ jobs:
           s = p.read_text()
           if "versionCode 20003" not in s or "versionName '2.0.0-alpha.4'" not in s:
               raise SystemExit("App 版本号不是预期的 alpha.4，停止构建")
-          s = s.replace("versionCode 20003", "versionCode 20006", 1)
-          s = s.replace("versionName '2.0.0-alpha.4'", "versionName '2.0.0-alpha.7'", 1)
+          s = s.replace("versionCode 20003", "versionCode 20007", 1)
+          s = s.replace("versionName '2.0.0-alpha.4'", "versionName '2.0.0-alpha.8'", 1)
           p.write_text(s)
 
           # Use the Microsoft device-code flow provided by bedrock-protocol.
           # OnMsaCode is the actual OAuth callback; open its official verification URI once per code.
           p = Path("agent/public/index.html")
           s = p.read_text()
-          s = s.replace("2.0.0-alpha.3 · 本机控制台", "2.0.0-alpha.7 · 本机控制台")
+          s = s.replace("2.0.0-alpha.3 · 本机控制台", "2.0.0-alpha.8 · 本机控制台")
           old_state = "let settings=null,lastChatCount=0,lastLogs='';"
           new_state = "let settings=null,lastChatCount=0,lastLogs='',lastOpenedMicrosoftCode='';"
           if old_state not in s:
@@ -182,10 +182,10 @@ jobs:
               s = s.replace(anchor, auth + anchor, 1)
 
           pattern = r"    client\.on\('login',\(\)=>\{[^\n]*\}\);"
-          replacement = """    client.on('login',()=>{
+          replacement = """    client.on('session',(profileData:any)=>{
               this.actualGamertag=String(client.profile?.name ?? client.username ?? '');
-              const profile=client.profile ?? {};
-              this.hooks.status('Android Bedrock/Xbox 身份验证通过（' + (this.actualGamertag || '已登录') + '），正在完成 Bedrock 登录…');
+              const profile=profileData ?? client.profile ?? {};
+              this.hooks.status('已获取 Minecraft Android Bedrock/Xbox 身份（' + (this.actualGamertag || '已登录') + '），正在完成服务器登录…');
               this.hooks.log('Android Bedrock 账号：Gamertag=' + (this.actualGamertag || 'unknown') + '；XUID=' + String(profile.xuid ?? 'unknown') + '；UUID=' + String(profile.uuid ?? 'unknown'));
               void authflow.getXboxToken('https://multiplayer.minecraft.net/').then((xsts:any)=>{
                 const expires=new Date(xsts.expiresOn);
@@ -361,7 +361,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: BlockmateAI-2.0-alpha.7-arm64-debug-apk
+          name: BlockmateAI-2.0-alpha.8-arm64-debug-apk
           path: BlockmateAI-Android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
@@ -369,8 +369,8 @@ jobs:
       - name: Publish public GitHub Release download
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: blockmate-ai-2.0-alpha.7-public-20261101
-          name: Blockmate AI 2.0 alpha.7 APK (Public Download)
+          tag_name: blockmate-ai-2.0-alpha.8-public-20261101
+          name: Blockmate AI 2.0 alpha.8 APK (Public Download)
           draft: false
           prerelease: true
           files: BlockmateAI-Android/app/build/outputs/apk/debug/app-debug.apk
