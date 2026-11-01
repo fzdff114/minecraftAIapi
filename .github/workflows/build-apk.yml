@@ -31,7 +31,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '24'
           cache: npm
           cache-dependency-path: BlockmateAI-Android/agent/package.json
 
@@ -61,7 +61,28 @@ jobs:
 
       - name: Bundle ARM64 Node runtime
         working-directory: BlockmateAI-Android
-        run: bash tools/prepare-runtime.sh
+        run: |
+          mkdir -p tools/vendor tools/bin
+          curl -fsSL https://raw.githubusercontent.com/LinMiZe/NodeJsBox/main/tools/fetch-termux-deps.cjs -o tools/vendor/fetch-termux-deps.cjs
+          curl -fsSL https://raw.githubusercontent.com/LinMiZe/NodeJsBox/main/tools/assemble-runtime.cjs -o tools/vendor/assemble-runtime.cjs
+          # The upstream helper has Windows-style .\\ paths; normalize them for the Linux runner.
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("tools/vendor/assemble-runtime.cjs")
+          s = p.read_text()
+          needle = r"""runTar(['-xf', '.\\' + path.basename(dataTar)], workDir);"""
+          replacement = "runTar(['-xf', path.basename(dataTar)], workDir);"
+          if needle not in s:
+              raise SystemExit("未找到需要修正的 Linux 解包路径，停止构建以避免生成错误运行时")
+          s = s.replace(needle, replacement)
+          deb_needle = r"""runTar(['-xf', '.\\' + path.basename(deb)], workDir);"""
+          s = s.replace(deb_needle, "runTar(['-xf', path.basename(deb)], workDir);")
+          p.write_text(s)
+          PY
+          ln -sf "$(command -v bsdtar)" tools/bin/tar
+          export PATH="$PWD/tools/bin:$PATH"
+          node tools/vendor/fetch-termux-deps.cjs --arch aarch64 --with-node
+          node tools/vendor/assemble-runtime.cjs --arch aarch64
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
