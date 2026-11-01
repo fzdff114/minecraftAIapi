@@ -105,12 +105,11 @@ jobs:
           from pathlib import Path
           p = Path("app/build.gradle")
           s = p.read_text()
-          anchor = "    compileSdk 35\\n"
-          patch = "    compileSdk 35\\n\\n    buildFeatures { buildConfig true }\\n"
+          anchor = "    compileSdk 35"
           if "buildFeatures { buildConfig true }" not in s:
               if anchor not in s:
                   raise SystemExit("未找到 compileSdk 配置，停止构建")
-              s = s.replace(anchor, patch, 1)
+              s = s.replace(anchor, anchor + chr(10) + chr(10) + "    buildFeatures { buildConfig true }", 1)
               p.write_text(s)
           PY
 
