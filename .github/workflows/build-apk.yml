@@ -55,6 +55,20 @@ jobs:
           npm run build
           npm prune --omit=dev
 
+      - name: Exclude bundled test fixture files
+        working-directory: BlockmateAI-Android
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const file = 'tools/prepare-agent.mjs';
+          let source = fs.readFileSync(file, 'utf8');
+          const needle = "filter: source => !source.split(path.sep).includes('.bin')";
+          const patched = "filter: source => { const parts = source.split(path.sep); return !parts.includes('.bin') && !(parts.includes('prismarine-nbt') && parts.includes('sample')); }";
+          if (!source.includes(needle)) throw new Error('未找到资源复制过滤器，停止构建');
+          source = source.replace(needle, patched);
+          fs.writeFileSync(file, source);
+          NODE
+
       - name: Package agent assets
         working-directory: BlockmateAI-Android
         run: node tools/prepare-agent.mjs
