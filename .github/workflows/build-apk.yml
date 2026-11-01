@@ -968,15 +968,15 @@ jobs:
                         "import { mkdir, rm } from 'node:fs/promises';\nimport { join } from 'node:path';", 1)
           s = s.replace("  private html='';\n", "", 1)
           s = s.replace("    this.html=await readFile(fileURLToPath(new URL('../public/index.html',import.meta.url)),'utf8');\n", "", 1)
-          old_root = """      if(req.method==='GET'&&url.pathname==='/') {
-                const body=this.html.replaceAll('__CONTROL_TOKEN__',this.token);
-                res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store'});res.end(body);return;
-              }"""
-          new_root = """      if(req.method==='GET'&&url.pathname==='/') {
+          root_start = s.find("if(req.method==='GET'&&url.pathname==='/') {")
+          manifest_start = s.find("if(req.method==='GET'&&url.pathname==='/manifest.webmanifest')", root_start)
+          if root_start < 0 or manifest_start < 0:
+              raise SystemExit("Dashboard HTML route boundaries not found")
+          root_replacement = """if(req.method==='GET'&&url.pathname==='/') {
                 this.json(res,404,{error:'此版本仅使用原生 Android 控制界面'});return;
-              }"""
-          if old_root not in s: raise SystemExit("Dashboard HTML root route anchor not found")
-          s = s.replace(old_root, new_root, 1)
+              }
+              """
+          s = s[:root_start] + root_replacement + s[manifest_start:]
           old_token = "if(req.headers['x-control-token']!==this.token) { this.json(res,403,{error:'控制令牌无效'});return; }"
           new_token = "if(req.headers['x-control-token']!==this.token && req.headers['x-control-token']!=='blockmate-native-android-v2-2026') { this.json(res,403,{error:'控制令牌无效'});return; }"
           if old_token not in s: raise SystemExit("Dashboard native API token guard anchor not found")
