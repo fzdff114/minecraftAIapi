@@ -75,14 +75,6 @@ jobs:
                   raise SystemExit("WebView 初始化位置未匹配，停止构建")
               s = s.replace(marker, bridge, 1)
 
-          old = """                } else {
-                    val error = AgentService.lastError"""
-          new = """                } else {
-                    if (webView.url?.startsWith(dashboardUrl) == true) showWelcome()
-                    val error = AgentService.lastError"""
-          if old not in s:
-              raise SystemExit("后台停止时清除旧控制面板的位置未匹配，停止构建")
-          s = s.replace(old, new, 1)
           p.write_text(s)
 
           # Keep the app version monotonic so Android replaces old bundled runtime files.
