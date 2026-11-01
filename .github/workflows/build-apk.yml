@@ -98,6 +98,22 @@ jobs:
           node tools/vendor/fetch-termux-deps.cjs --arch aarch64 --with-node
           node tools/vendor/assemble-runtime.cjs --arch aarch64
 
+      - name: Enable Android BuildConfig generation
+        working-directory: BlockmateAI-Android
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("app/build.gradle")
+          s = p.read_text()
+          anchor = "    compileSdk 35\\n"
+          patch = "    compileSdk 35\\n\\n    buildFeatures { buildConfig true }\\n"
+          if "buildFeatures { buildConfig true }" not in s:
+              if anchor not in s:
+                  raise SystemExit("未找到 compileSdk 配置，停止构建")
+              s = s.replace(anchor, patch, 1)
+              p.write_text(s)
+          PY
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
