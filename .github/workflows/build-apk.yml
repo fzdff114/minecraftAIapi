@@ -22,6 +22,89 @@ jobs:
           test -f BlockmateAI-Android/settings.gradle
           test -f BlockmateAI-Android/app/build.gradle
 
+      - name: Repair runtime asset extraction and invoke official Microsoft sign-in
+        working-directory: BlockmateAI-Android
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          # Keep package-owned data assets; preserve only the app's own auth/settings directory.
+          p = Path("app/src/main/java/com/blockmate/ai/AgentService.kt")
+          s = p.read_text()
+          old = 'if (childAsset.contains("/data/")) continue'
+          new = 'if (childAsset == "agent/data" || childAsset.startsWith("agent/data/")) continue'
+          if old not in s:
+              raise SystemExit("AgentService 数据目录过滤规则未匹配，停止构建")
+          p.write_text(s.replace(old, new, 1))
+
+          # Provide a native bridge so the official Microsoft device-login page opens automatically.
+          p = Path("app/src/main/java/com/blockmate/ai/MainActivity.kt")
+          s = p.read_text()
+          if "import android.webkit.JavascriptInterface" not in s:
+              s = s.replace("import android.webkit.WebChromeClient", "import android.webkit.JavascriptInterface\\nimport android.webkit.WebChromeClient", 1)
+          marker = "            webChromeClient = WebChromeClient()"
+          bridge = """            webChromeClient = WebChromeClient()
+                      addJavascriptInterface(object {
+                          @JavascriptInterface
+                          fun openMicrosoftLogin(rawUrl: String) {
+                              try {
+                                  val uri = Uri.parse(rawUrl)
+                                  val host = uri.host?.lowercase() ?: return
+                                  val microsoftHost = host == "microsoft.com" || host.endsWith(".microsoft.com") ||
+                                      host == "live.com" || host.endsWith(".live.com") ||
+                                      host == "microsoftonline.com" || host.endsWith(".microsoftonline.com")
+                                  if (uri.scheme == "https" && microsoftHost) {
+                                      runOnUiThread { openExternal(uri) }
+                                  }
+                              } catch (_: Exception) { }
+                          }
+                      }, "AndroidBridge")"""
+          if '}, "AndroidBridge")' not in s:
+              if marker not in s:
+                  raise SystemExit("MainActivity WebView 初始化位置未匹配，停止构建")
+              s = s.replace(marker, bridge, 1)
+          p.write_text(s)
+
+          # Bump app version so Android refreshes the corrected packaged resources.
+          p = Path("app/build.gradle")
+          s = p.read_text()
+          if "versionCode 20003" not in s or "versionName '2.0.0-alpha.4'" not in s:
+              raise SystemExit("App 版本号不是预期的 alpha.4，停止构建")
+          s = s.replace("versionCode 20003", "versionCode 20004", 1)
+          s = s.replace("versionName '2.0.0-alpha.4'", "versionName '2.0.0-alpha.5'", 1)
+          p.write_text(s)
+
+          # Automatically open Microsoft's official device sign-in page when Bedrock requests auth.
+          p = Path("agent/public/index.html")
+          s = p.read_text()
+          s = s.replace("2.0.0-alpha.3 · 本机控制台", "2.0.0-alpha.5 · 本机控制台")
+          s = s.replace("let settings=null,lastChatCount=0,lastLogs='';", "let settings=null,lastChatCount=0,lastLogs='',lastOpenedMicrosoftCode='';")
+          old = """if(s.deviceCode){$('deviceCode').style.display='block';$('verifyLink').href=s.deviceCode.verificationUri||'https://microsoft.com/link';$('codeValue').textContent=s.deviceCode.userCode||'';$('codeMessage').textContent=s.deviceCode.message||'在微软登录页面输入上方代码。'}else $('deviceCode').style.display='none';"""
+          new = """if(s.deviceCode){
+            $('deviceCode').style.display='block';
+            const microsoftUrl=s.deviceCode.verificationUri||'https://microsoft.com/devicelogin';
+            const microsoftCode=s.deviceCode.userCode||'';
+            $('verifyLink').href=microsoftUrl;
+            $('verifyLink').textContent='打开微软官方账号登录页面';
+            $('codeValue').textContent=microsoftCode;
+            $('codeMessage').textContent='请在刚打开的微软页面登录你的 Microsoft 账号，并输入上方设备代码。密码只在微软页面输入，不会交给本应用。';
+            if(microsoftCode && microsoftCode!==lastOpenedMicrosoftCode){
+              lastOpenedMicrosoftCode=microsoftCode;
+              if(window.AndroidBridge && window.AndroidBridge.openMicrosoftLogin){
+                window.AndroidBridge.openMicrosoftLogin(microsoftUrl);
+              } else {
+                window.location.href=microsoftUrl;
+              }
+            }
+          } else {
+            $('deviceCode').style.display='none';
+            lastOpenedMicrosoftCode='';
+          }"""
+          if old not in s:
+              raise SystemExit("Dashboard Microsoft device-code UI 未匹配，停止构建")
+          p.write_text(s.replace(old, new, 1))
+          PY
+
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
@@ -130,7 +213,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: BlockmateAI-2.0-alpha.4-arm64-debug-apk
+          name: BlockmateAI-2.0-alpha.5-arm64-debug-apk
           path: BlockmateAI-Android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
@@ -138,8 +221,8 @@ jobs:
       - name: Publish public GitHub Release download
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: blockmate-ai-2.0-alpha.4-public-20261101
-          name: Blockmate AI 2.0 APK (Public Download)
+          tag_name: blockmate-ai-2.0-alpha.5-public-20261101
+          name: Blockmate AI 2.0 alpha.5 APK (Public Download)
           draft: false
           prerelease: true
           files: BlockmateAI-Android/app/build/outputs/apk/debug/app-debug.apk
