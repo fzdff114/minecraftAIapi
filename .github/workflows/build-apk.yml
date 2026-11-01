@@ -26,7 +26,7 @@ jobs:
         run: |
           {
             echo "=== SOURCE FILES ==="
-            find app/src/main agent -type f \\( -name '*.kt' -o -name '*.java' -o -name '*.js' -o -name '*.ts' -o -name '*.html' -o -name '*.json' \\) 2>/dev/null | sort
+            find app/src/main agent -type f 2>/dev/null | sort
             echo "=== AUTH / API MATCHES ==="
             rg -n -C 4 "deviceCode|verificationUri|userCode|microsoft|xbox|auth|login|fetch\\(|/api|127\\.0\\.0\\.1|localhost|startService|startServer" app/src/main agent --glob '*.kt' --glob '*.js' --glob '*.ts' --glob '*.html' --glob '*.json' || true
             echo "=== MAIN ACTIVITY ==="
