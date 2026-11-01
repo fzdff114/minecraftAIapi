@@ -16,6 +16,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Extract uploaded Android source archive
+        run: |
+          unzip -q BlockmateAI-2.0-alpha.4-current.zip
+          test -f BlockmateAI-Android/settings.gradle
+          test -f BlockmateAI-Android/app/build.gradle
+
       - name: Fix agent data extraction, launch Microsoft OAuth page, and auto-start backend
         working-directory: BlockmateAI-Android
         run: |
@@ -35,7 +41,7 @@ jobs:
           p = Path("app/src/main/java/com/blockmate/ai/MainActivity.kt")
           s = p.read_text()
           if "import android.webkit.JavascriptInterface" not in s:
-              s = s.replace("import android.webkit.WebChromeClient", "import android.webkit.JavascriptInterface\\nimport android.webkit.WebChromeClient", 1)
+              s = s.replace("import android.webkit.WebChromeClient", "import android.webkit.JavascriptInterface\nimport android.webkit.WebChromeClient", 1)
           old = """        if (AgentService.isBackendAlive) loadDashboard() else showWelcome()
           startStatusPolling()"""
           new = """        if (AgentService.isBackendAlive) loadDashboard() else {
