@@ -995,7 +995,7 @@ jobs:
           p.write_text(s)
 
           # No HTML UI or WebView assets remain in the APK.
-          Path("agent/public/index.html").unlink(missing_ok=True)
+          Path("agent/public/index.html").write_text("<!-- Native Android screen; HTML dashboard is disabled. -->\\n")
 
           manifest = Path("app/src/main/AndroidManifest.xml")
           m = manifest.read_text()
