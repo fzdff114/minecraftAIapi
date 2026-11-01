@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   actions: read
 
 jobs:
@@ -134,3 +134,14 @@ jobs:
           path: BlockmateAI-Android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
+
+      - name: Publish public GitHub Release download
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: blockmate-ai-2.0-alpha.4-public-20261101
+          name: Blockmate AI 2.0 APK (Public Download)
+          draft: false
+          prerelease: true
+          files: BlockmateAI-Android/app/build/outputs/apk/debug/app-debug.apk
+        env:
+          GITHUB_TOKEN: ${{ "${{ secrets.GITHUB_TOKEN }}" }}
