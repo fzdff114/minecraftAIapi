@@ -82,15 +82,15 @@ jobs:
           s = p.read_text()
           if "versionCode 20003" not in s or "versionName '2.0.0-alpha.4'" not in s:
               raise SystemExit("App 版本号不是预期的 alpha.4，停止构建")
-          s = s.replace("versionCode 20003", "versionCode 20005", 1)
-          s = s.replace("versionName '2.0.0-alpha.4'", "versionName '2.0.0-alpha.6'", 1)
+          s = s.replace("versionCode 20003", "versionCode 20006", 1)
+          s = s.replace("versionName '2.0.0-alpha.4'", "versionName '2.0.0-alpha.7'", 1)
           p.write_text(s)
 
           # Use the Microsoft device-code flow provided by bedrock-protocol.
           # OnMsaCode is the actual OAuth callback; open its official verification URI once per code.
           p = Path("agent/public/index.html")
           s = p.read_text()
-          s = s.replace("2.0.0-alpha.3 · 本机控制台", "2.0.0-alpha.6 · 本机控制台")
+          s = s.replace("2.0.0-alpha.3 · 本机控制台", "2.0.0-alpha.7 · 本机控制台")
           old_state = "let settings=null,lastChatCount=0,lastLogs='';"
           new_state = "let settings=null,lastChatCount=0,lastLogs='',lastOpenedMicrosoftCode='';"
           if old_state not in s:
@@ -128,6 +128,125 @@ jobs:
               raise SystemExit("Dashboard 微软设备码显示逻辑未匹配，停止构建")
           s = s.replace(old_code, new_code, 1)
 
+          p.write_text(s)
+          PY
+
+      - name: Use Minecraft Android Bedrock Xbox authentication identity
+        working-directory: BlockmateAI-Android
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          p = Path("agent/src/bedrock-transport.ts")
+          s = p.read_text()
+
+          old = "type FriendSession = Record<string, any>;"
+          new = old + "\ntype XboxAccountInfo = { gamertag:string; uuid:string; xuid:string; userHash:string; titleId:string; platform:string; expiresAt:string; bedrockChainReady:boolean; multiplayerTokenReady:boolean };"
+          if "type XboxAccountInfo" not in s:
+              if old not in s: raise SystemExit("BedrockTransport account type anchor not found")
+              s = s.replace(old, new, 1)
+
+          old = "  private actualGamertag='';"
+          new = old + "\n  private authInfo: XboxAccountInfo|null=null;"
+          if "private authInfo: XboxAccountInfo|null=null;" not in s:
+              if old not in s: raise SystemExit("BedrockTransport auth state anchor not found")
+              s = s.replace(old, new, 1)
+
+          old = "  getBotName():string { return this.actualGamertag || String(this.client?.profile?.name ?? this.client?.username ?? this.getSettings().server.username); }"
+          new = old + "\n  getAuthInfo():XboxAccountInfo|null { return this.authInfo ? {...this.authInfo} : null; }"
+          if "getAuthInfo():XboxAccountInfo|null" not in s:
+              if old not in s: raise SystemExit("BedrockTransport auth getter anchor not found")
+              s = s.replace(old, new, 1)
+
+          old = "      version:settings.server.version,\n      offline:false,"
+          new = "      version:settings.server.version,\n      authTitle:'0000000048183522',\n      deviceType:'Android',\n      deviceOS:1,\n      flow:'live',\n      offline:false,"
+          if "authTitle:'0000000048183522'" not in s:
+              if old not in s: raise SystemExit("Bedrock client Android auth option anchor not found")
+              s = s.replace(old, new, 1)
+
+          anchor = "\n\n    if(settings.server.mode==='realm') {"
+          auth = """
+          
+              // Token material remains in the app-private cache; raw credentials are never returned to the AI API or UI.
+              const authlib=require('prismarine-auth');
+              const authflow=new authlib.Authflow(settings.server.username,this.authFolder,{
+                flow:'live',
+                authTitle:authlib.Titles.MinecraftAndroid,
+                deviceType:'Android'
+              },options.onMsaCode);
+              options.authflow=authflow;
+          """
+          if "const authflow=new authlib.Authflow" not in s:
+              if anchor not in s: raise SystemExit("Bedrock authflow injection anchor not found")
+              s = s.replace(anchor, auth + anchor, 1)
+
+          pattern = r"    client\.on\('login',\(\)=>\{[^\n]*\}\);"
+          replacement = """    client.on('login',()=>{
+              this.actualGamertag=String(client.profile?.name ?? client.username ?? '');
+              const profile=client.profile ?? {};
+              this.hooks.status('Android Bedrock/Xbox 身份验证通过（' + (this.actualGamertag || '已登录') + '），正在完成 Bedrock 登录…');
+              this.hooks.log('Android Bedrock 账号：Gamertag=' + (this.actualGamertag || 'unknown') + '；XUID=' + String(profile.xuid ?? 'unknown') + '；UUID=' + String(profile.uuid ?? 'unknown'));
+              void authflow.getXboxToken('https://multiplayer.minecraft.net/').then((xsts:any)=>{
+                const expires=new Date(xsts.expiresOn);
+                this.authInfo={
+                  gamertag:this.actualGamertag || String(profile.name ?? ''),
+                  uuid:String(profile.uuid ?? ''),
+                  xuid:String(profile.xuid ?? xsts.userXUID ?? ''),
+                  userHash:String(xsts.userHash ?? ''),
+                  titleId:'0000000048183522',
+                  platform:'Android',
+                  expiresAt:Number.isNaN(expires.getTime()) ? String(xsts.expiresOn ?? '') : expires.toISOString(),
+                  bedrockChainReady:Array.isArray(client.accessToken) && client.accessToken.length>=2,
+                  multiplayerTokenReady:Boolean(client.multiplayerToken)
+                };
+                this.hooks.log('Xbox 会话信息已载入：XUID=' + this.authInfo.xuid + '；XSTS=' + Boolean(xsts.XSTSToken) + '；Bedrock 身份链=' + this.authInfo.bedrockChainReady + '；多人凭据=' + this.authInfo.multiplayerTokenReady);
+              }).catch((error:any)=>this.hooks.log('读取 Xbox 会话元数据失败：' + (error instanceof Error ? error.message : String(error))));
+            });"""
+          s, count = re.subn(pattern, lambda _: replacement, s, count=1)
+          if count != 1: raise SystemExit("Bedrock login listener anchor not found")
+          p.write_text(s)
+
+          p = Path("agent/src/main.ts")
+          s = p.read_text()
+          old = "return {status:currentStatus,running:r.running,goal:r.goal,errors:r.errors,connected:transport.isConnected(),world,deviceCode,worlds:friendWorlds,logs:chatLogs,systemLogs,aiAvailable:settings.ai.enabled&&ai.available,hasApiKey:Boolean(settings.ai.apiKey),botName:transport.getBotName()};"
+          new = "return {status:currentStatus,running:r.running,goal:r.goal,errors:r.errors,connected:transport.isConnected(),world,deviceCode,worlds:friendWorlds,logs:chatLogs,systemLogs,aiAvailable:settings.ai.enabled&&ai.available,hasApiKey:Boolean(settings.ai.apiKey),botName:transport.getBotName(),authInfo:transport.getAuthInfo()};"
+          if "authInfo:transport.getAuthInfo()" not in s:
+              if old not in s: raise SystemExit("Dashboard state response anchor not found")
+              s = s.replace(old, new, 1)
+          p.write_text(s)
+
+          p = Path("agent/src/dashboard.ts")
+          s = p.read_text()
+          old = "  worlds:FriendWorld[];logs:LogEntry[];systemLogs:string[];aiAvailable:boolean;hasApiKey:boolean;botName?:string;"
+          new = old + "\n  authInfo:{gamertag:string;uuid:string;xuid:string;userHash:string;titleId:string;platform:string;expiresAt:string;bedrockChainReady:boolean;multiplayerTokenReady:boolean}|null;"
+          if "authInfo:{gamertag:string" not in s:
+              if old not in s: raise SystemExit("DashboardState auth info type anchor not found")
+              s = s.replace(old, new, 1)
+          p.write_text(s)
+
+          p = Path("agent/public/index.html")
+          s = p.read_text()
+          old = '<div class="hint">使用 Microsoft 设备代码登录。要让 AI 成为第二名玩家，必须登录另一个拥有 Minecraft 权限的 Xbox 账号；游戏内显示该账号自己的 Gamertag。好友世界模式会列出当前账号可加入的 Xbox 好友会话；好友需在线且世界允许加入。Realm 模式则要求账号拥有或获邀加入该 Realm。</div><div id="deviceCode"'
+          new = '<div class="field"><label>Android Bedrock / Xbox 登录身份</label><div id="xboxIdentity" class="log">等待 Microsoft/Xbox 登录…</div></div><div class="hint">使用 Minecraft Android 的 Title ID 与设备类型进行 Live/Xbox 身份验证。只显示账号元数据和凭据就绪状态，不显示原始令牌。</div><div class="hint">好友世界和 Realm 继续使用原有加入流程。</div><div id="deviceCode"'
+          if 'id="xboxIdentity"' not in s:
+              if old not in s: raise SystemExit("Dashboard Xbox identity UI anchor not found")
+              s = s.replace(old, new, 1)
+
+          pattern = r"if\(s\.botName\)\{\$\('runtimeMeta'\)\.textContent=\x60Gamertag：\$\{s\.botName\} · 运行错误 \$\{s\.errors\?\?0\}\x60;\}"
+          replacement = """if(s.botName){$('runtimeMeta').textContent='Gamertag：'+s.botName+' · 运行错误 '+(s.errors??0);}
+          const a=s.authInfo;
+          $('xboxIdentity').textContent=a?[
+            '登录平台：'+a.platform+' · Title ID：'+a.titleId,
+            'Gamertag：'+a.gamertag,
+            'XUID：'+a.xuid,
+            '用户哈希：'+a.userHash,
+            '玩家 UUID：'+a.uuid,
+            'XSTS 有效期：'+a.expiresAt,
+            'Bedrock 身份链：'+(a.bedrockChainReady?'已载入':'未载入')+' · 多人凭据：'+(a.multiplayerTokenReady?'已载入':'未载入')
+          ].join('\\n'):'尚未完成 Xbox 登录；登录成功后会在这里显示 Gamertag、XUID 与会话状态。';"""
+          s, count = re.subn(pattern, lambda _: replacement, s, count=1)
+          if count != 1: raise SystemExit("Dashboard refresh auth metadata anchor not found")
           p.write_text(s)
           PY
 
@@ -242,7 +361,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: BlockmateAI-2.0-alpha.6-arm64-debug-apk
+          name: BlockmateAI-2.0-alpha.7-arm64-debug-apk
           path: BlockmateAI-Android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
@@ -250,8 +369,8 @@ jobs:
       - name: Publish public GitHub Release download
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: blockmate-ai-2.0-alpha.6-public-20261101
-          name: Blockmate AI 2.0 alpha.6 APK (Public Download)
+          tag_name: blockmate-ai-2.0-alpha.7-public-20261101
+          name: Blockmate AI 2.0 alpha.7 APK (Public Download)
           draft: false
           prerelease: true
           files: BlockmateAI-Android/app/build/outputs/apk/debug/app-debug.apk
