@@ -37,6 +37,10 @@ jobs:
             cat app/src/main/AndroidManifest.xml
             echo "=== PACKAGE.JSON ==="
             cat agent/package.json
+            echo "=== ALL AGENT TYPESCRIPT ==="
+            for f in agent/src/*.ts; do echo "===== $f ====="; cat "$f"; done
+            echo "=== DASHBOARD HTML ==="
+            cat agent/public/index.html
           } > auth-source-inspection.txt
 
       - name: Upload source inspection
@@ -46,6 +50,9 @@ jobs:
           path: BlockmateAI-Android/auth-source-inspection.txt
           if-no-files-found: error
           retention-days: 7
+
+      - name: End diagnostic-only run
+        run: exit 0
 
 
       - name: Repair runtime asset extraction and invoke official Microsoft sign-in
