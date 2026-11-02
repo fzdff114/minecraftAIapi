@@ -82,15 +82,15 @@ jobs:
           s = p.read_text()
           if "versionCode 20003" not in s or "versionName '2.0.0-alpha.4'" not in s:
               raise SystemExit("App 版本号不是预期的 alpha.4，停止构建")
-          s = s.replace("versionCode 20003", "versionCode 20015", 1)
-          s = s.replace("versionName '2.0.0-alpha.4'", "versionName '2.0.0-alpha.16'", 1)
+          s = s.replace("versionCode 20003", "versionCode 20016", 1)
+          s = s.replace("versionName '2.0.0-alpha.4'", "versionName '2.0.0-alpha.17'", 1)
           p.write_text(s)
 
           # Use the Microsoft device-code flow provided by bedrock-protocol.
           # OnMsaCode is the actual OAuth callback; open its official verification URI once per code.
           p = Path("agent/public/index.html")
           s = p.read_text()
-          s = s.replace("2.0.0-alpha.3 · 本机控制台", "2.0.0-alpha.16 · 本机控制台")
+          s = s.replace("2.0.0-alpha.3 · 本机控制台", "2.0.0-alpha.17 · 本机控制台")
           old_state = "let settings=null,lastChatCount=0,lastLogs='';"
           new_state = "let settings=null,lastChatCount=0,lastLogs='',lastOpenedMicrosoftCode='';"
           if old_state not in s:
@@ -2366,6 +2366,302 @@ jobs:
           p.write_text(s)
           PY
 
+      - name: Build Minecraft-style sign-in screen and AI-only home
+        working-directory: BlockmateAI-Android
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          # The sign-in page is a deliberate user action: do not launch an OAuth flow
+          # while the user is still looking at the title screen.
+          p = Path("agent/src/main.ts")
+          s = p.read_text()
+          pattern = r"await dashboard\.listen\(settings\.dashboard\.port\);\s*setTimeout\(\(\) => \{\s*void transport\.authenticateAccount\(\)\.catch\(\(error:any\) => \{\s*status\([^;]*;\s*\}\);\s*\},\s*250\);"
+          s, removed = re.subn(pattern, "await dashboard.listen(settings.dashboard.port);", s, count=1, flags=re.S)
+          if removed == 0 and "transport.authenticateAccount()" in s:
+              raise SystemExit("Unexpected auto-authentication block format; refusing to leave an unverified automatic popup")
+          p.write_text(s)
+
+          p = Path("app/src/main/java/com/blockmate/ai/MainActivity.kt")
+          s = p.read_text()
+
+          # Track the dedicated sign-in screen and its visible labels.
+          field_anchor = "private lateinit var pageHost: FrameLayout"
+          if field_anchor not in s:
+              raise SystemExit("MainActivity navigation container field is missing")
+          if "private lateinit var loginPage: ScrollView" not in s:
+              s = s.replace(field_anchor, field_anchor + """
+              private lateinit var loginPage: ScrollView
+              private lateinit var loginPrompt: TextView
+              private lateinit var loginActionLabel: TextView
+              private var loginPageVisible = false
+          """, 1)
+
+          # Put the sign-in gate first; keep the existing real AI/server/settings pages behind it.
+          build_start = s.rfind("private fun buildUi() {")
+          show_page = s.find("private fun showPage(", build_start if build_start >= 0 else 0)
+          if build_start < 0 or show_page < 0:
+              raise SystemExit("Final MainActivity buildUi/showPage boundary missing")
+          build_start = s.rfind("\n", 0, build_start) + 1
+          show_page = s.rfind("\n", 0, show_page) + 1
+          build_method = """              private fun buildUi() {
+                  window.statusBarColor = Color.rgb(29, 26, 19)
+                  window.navigationBarColor = Color.WHITE
+                  window.decorView.systemUiVisibility = window.decorView.systemUiVisibility or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+                  pageHost = FrameLayout(this).apply { setBackgroundColor(Color.rgb(9, 17, 29)) }
+                  setContentView(pageHost)
+
+                  loginPage = buildLoginPage()
+                  homePage = buildMainMenu()
+                  serverPage = buildServerPage()
+                  aiPage = buildAiPage()
+                  behaviorPage = buildBehaviorPage()
+                  logsPage = buildLogsPage()
+
+                  showPage(loginPage)
+                  loginPageVisible = true
+              }
+
+          """
+          s = s[:build_start] + build_method + s[show_page:]
+
+          # The screenshot's composition is used for the first screen:
+          # Minecraft header, blurred in-game panorama, original title mark,
+          # sign-in prompt and a single green login action.
+          login_method = r'''
+              private fun buildLoginPage(): ScrollView {
+                  val scroll = ScrollView(this).apply {
+                      isFillViewport = true
+                      setBackgroundColor(Color.rgb(21, 25, 24))
+                      overScrollMode = View.OVER_SCROLL_NEVER
+                  }
+                  val frame = FrameLayout(this).apply {
+                      minimumHeight = resources.displayMetrics.heightPixels
+                  }
+                  scroll.addView(frame, android.view.ViewGroup.LayoutParams(-1, -1))
+
+                  val background = ImageView(this).apply {
+                      scaleType = ImageView.ScaleType.CENTER_CROP
+                      contentDescription = "Minecraft 游戏场景背景"
+                      try {
+                          assets.open("minecraft/main_menu_panorama.jpg").use { input ->
+                              setImageBitmap(BitmapFactory.decodeStream(input))
+                          }
+                          if (Build.VERSION.SDK_INT >= 31) {
+                              setRenderEffect(android.graphics.RenderEffect.createBlurEffect(
+                                  16f, 16f, android.graphics.Shader.TileMode.CLAMP
+                              ))
+                          }
+                  } catch (_: Exception) {
+                      setBackgroundColor(0xFF263A3D.toInt())
+                  }
+                  }
+                  frame.addView(background, android.view.ViewGroup.LayoutParams(-1, -1))
+
+                  // Darken the panorama like the original account sign-in splash.
+                  frame.addView(View(this).apply {
+                      setBackgroundColor(0x72000000)
+                  }, android.view.ViewGroup.LayoutParams(-1, -1))
+
+                  val topBar = LinearLayout(this).apply {
+                      orientation = LinearLayout.HORIZONTAL
+                      gravity = Gravity.CENTER_VERTICAL
+                      setPadding(dp(18), 0, dp(16), 0)
+                      setBackgroundColor(Color.rgb(29, 26, 19))
+                  }
+                  val topTitle = TextView(this).apply {
+                      text = "Minecraft"
+                      textSize = 24f
+                      setTextColor(0xFFF1F0EB.toInt())
+                      typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+                  }
+                  topBar.addView(topTitle, LinearLayout.LayoutParams(-1, -1))
+                  val topLp = FrameLayout.LayoutParams(-1, dp(82), Gravity.TOP)
+                  frame.addView(topBar, topLp)
+
+                  val center = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      gravity = Gravity.CENTER
+                      setPadding(dp(28), dp(8), dp(28), dp(8))
+                  }
+                  val logo = ImageView(this).apply {
+                      adjustViewBounds = true
+                      scaleType = ImageView.ScaleType.FIT_CENTER
+                      try {
+                          assets.open("minecraft/menu_logo_small.webp").use { input ->
+                              setImageBitmap(BitmapFactory.decodeStream(input))
+                          }
+                      } catch (_: Exception) {}
+                  }
+                  center.addView(logo, LinearLayout.LayoutParams(dp(205), dp(58)).apply {
+                      bottomMargin = dp(46)
+                  })
+
+                  loginPrompt = TextView(this).apply {
+                      text = "请登录你的账户"
+                      textSize = 31f
+                      gravity = Gravity.CENTER
+                      setTextColor(Color.WHITE)
+                      typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+                      maxLines = 2
+                      setLineSpacing(dp(2).toFloat(), 1.0f)
+                  }
+                  center.addView(loginPrompt, LinearLayout.LayoutParams(-1, -2))
+                  val centerLp = FrameLayout.LayoutParams(-1, -2, Gravity.CENTER)
+                  centerLp.topMargin = dp(52)
+                  centerLp.bottomMargin = dp(70)
+                  frame.addView(center, centerLp)
+
+                  val loginButton = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      gravity = Gravity.CENTER
+                      background = GradientDrawable().apply {
+                          setColor(0xFF005B38.toInt())
+                          cornerRadius = dp(40).toFloat()
+                          setStroke(dp(2), Color.WHITE)
+                      }
+                      elevation = dp(2).toFloat()
+                      isClickable = true
+                      isFocusable = true
+                      setOnClickListener {
+                          if (authAvailable) {
+                              loginPageVisible = false
+                              showPage(homePage)
+                          } else {
+                              requestMicrosoftLogin()
+                          }
+                      }
+                  }
+                  loginActionLabel = TextView(this).apply {
+                      text = "登录"
+                      textSize = 18f
+                      gravity = Gravity.CENTER
+                      setTextColor(Color.WHITE)
+                  }
+                  loginButton.addView(loginActionLabel, LinearLayout.LayoutParams(-1, -1))
+                  val buttonLp = FrameLayout.LayoutParams(-1, dp(50), Gravity.BOTTOM)
+                  buttonLp.leftMargin = dp(40)
+                  buttonLp.rightMargin = dp(40)
+                  buttonLp.bottomMargin = dp(24)
+                  frame.addView(loginButton, buttonLp)
+
+                  return scroll
+              }
+
+          '''
+          if "private fun buildLoginPage(): ScrollView" not in s:
+              anchor = "private fun buildMainMenu(): ScrollView"
+              pos = s.find(anchor)
+              if pos < 0:
+                  raise SystemExit("MainActivity buildMainMenu insertion point missing")
+              line_start = s.rfind("\n", 0, pos) + 1
+              s = s[:line_start] + login_method + s[line_start:]
+
+          # Replace the previous home page with only AI functions, using Minecraft's
+          # panorama/title/button language. No vanilla survival/creative/play options remain.
+          home_start = s.find("private fun buildMainMenu(): ScrollView")
+          home_end = s.find("private fun buildServerPage()", home_start if home_start >= 0 else 0)
+          if home_start < 0 or home_end < 0:
+              raise SystemExit("MainActivity home/server page boundaries missing")
+          home_start = s.rfind("\n", 0, home_start) + 1
+          home_end = s.rfind("\n", 0, home_end) + 1
+          home_method = r'''
+              private fun buildMainMenu(): ScrollView {
+                  val scroll = ScrollView(this).apply {
+                      isFillViewport = true
+                      setBackgroundColor(Color.rgb(9, 17, 29))
+                      overScrollMode = View.OVER_SCROLL_NEVER
+                  }
+                  val frame = FrameLayout(this).apply {
+                      minimumHeight = resources.displayMetrics.heightPixels
+                  }
+                  scroll.addView(frame, android.view.ViewGroup.LayoutParams(-1, -1))
+
+                  val background = ImageView(this).apply {
+                      scaleType = ImageView.ScaleType.CENTER_CROP
+                      try {
+                          assets.open("minecraft/main_menu_panorama.jpg").use { input ->
+                              setImageBitmap(BitmapFactory.decodeStream(input))
+                          }
+                      } catch (_: Exception) {
+                          setBackgroundColor(0xFF172C3A.toInt())
+                      }
+                  }
+                  frame.addView(background, android.view.ViewGroup.LayoutParams(-1, -1))
+                  frame.addView(View(this).apply {
+                      setBackgroundColor(0x82081320.toInt())
+                  }, android.view.ViewGroup.LayoutParams(-1, -1))
+
+                  val content = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      setPadding(dp(18), dp(20), dp(18), dp(26))
+                  }
+                  frame.addView(content, android.view.ViewGroup.LayoutParams(-1, -2))
+
+                  val logo = ImageView(this).apply {
+                      adjustViewBounds = true
+                      scaleType = ImageView.ScaleType.FIT_CENTER
+                      try {
+                          assets.open("minecraft/menu_logo_small.webp").use { input ->
+                              setImageBitmap(BitmapFactory.decodeStream(input))
+                          }
+                      } catch (_: Exception) {}
+                  }
+                  content.addView(logo, LinearLayout.LayoutParams(-1, dp(72)))
+                  val brand = addText(content, "方块伙伴 AI 2.0", 22f, true, Color.WHITE)
+                  brand.gravity = Gravity.CENTER
+                  val subtitle = addText(content, "Minecraft Bedrock · AI 玩家控制台", 12f, false, 0xFFE2E8F0.toInt())
+                  subtitle.gravity = Gravity.CENTER
+
+                  val account = card(content, "Microsoft / Xbox")
+                  accountStatus = addText(account, "正在读取账号状态…", 16f, true, Color.WHITE)
+                  accountDetails = addText(account, "登录信息保存在应用私有目录；Xbox 令牌不会发送给 AI 服务。", 12f, false, 0xFFD4DFEC.toInt())
+
+                  val actions = card(content, "AI 控制")
+                  addMenuButton(actions, "AI 操控", true) { showPage(serverPage) }
+                  addMenuButton(actions, "AI 设置", false) { showPage(aiPage) }
+                  addMenuButton(actions, "AI 行为设置", false) { showPage(behaviorPage) }
+                  addMenuButton(actions, "角色与皮肤", false) { openMinecraftProfile() }
+                  addMenuButton(actions, "运行日志", false) { showPage(logsPage) }
+
+                  val accountRow = row(content)
+                  addButton(accountRow, "切换 Microsoft 账号", false) { clearXboxCache() }
+                  addButton(accountRow, "刷新状态", false) { refreshState() }
+
+                  val footer = addText(content,
+                      "仅保留 AI 玩家控制、Bedrock 联机和必要账号功能。原版日常游玩入口已移除。",
+                      11f, false, 0xFFD0DBE8.toInt())
+                  footer.gravity = Gravity.CENTER
+                  return scroll
+              }
+
+          '''
+          s = s[:home_start] + home_method + s[home_end:]
+
+          # Label the connection page as AI control, not a vanilla game mode screen.
+          s=s.replace('createSolidPage("游戏连接")','createSolidPage("AI 操控 · Bedrock 连接")',1)
+          s=s.replace('"登录并加入世界"','"启动 AI 操控并加入世界"',1)
+
+          # Reflect the signed-in state on both the start page and the AI home page.
+          if 'loginActionLabel.text = "进入 AI 控制台"' not in s:
+              marker = 'accountDetails.text = lines.joinToString("\\n")'
+              if marker not in s:
+                  raise SystemExit("MainActivity account metadata refresh marker missing")
+              s=s.replace(marker, marker + """
+                      if (this::loginPrompt.isInitialized) loginPrompt.text = "已登录：" + tag
+                      if (this::loginActionLabel.isInitialized) loginActionLabel.text = "进入 AI 控制台"
+                  """,1)
+
+          marker2 = 'accountDetails.text = "请在 Microsoft 页面输入登录代码并完成 Xbox 登录。"'
+          if marker2 in s:
+              s=s.replace(marker2, marker2 + """
+                      if (this::loginPrompt.isInitialized) loginPrompt.text = "正在连接 Microsoft 官方账号…"
+                  """,1)
+
+          p.write_text(s)
+          PY
+
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
@@ -2502,7 +2798,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: BlockmateAI-2.0-alpha.16-arm64-debug-apk
+          name: BlockmateAI-2.0-alpha.17-arm64-debug-apk
           path: BlockmateAI-Android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
@@ -2510,8 +2806,8 @@ jobs:
       - name: Publish public GitHub Release download
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: blockmate-ai-2.0-alpha.16-public-20261102
-          name: Blockmate AI 2.0 alpha.16 APK (Public Download)
+          tag_name: blockmate-ai-2.0-alpha.17-public-20261102
+          name: Blockmate AI 2.0 alpha.17 APK (Public Download)
           draft: false
           prerelease: true
           files: BlockmateAI-Android/app/build/outputs/apk/debug/app-debug.apk
