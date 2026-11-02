@@ -1672,7 +1672,7 @@ jobs:
           # Add full-width style back button overload is avoided; the generic API methods are reused.
           # Load settings without touching controls that are not currently on screen.
           start=s.find("private fun loadSettings() {")
-          end=s.find("private fun buildSettingsPayload()",start if start>=0 else 0)
+          end=s.find("private fun settingsPayload()",start if start>=0 else 0)
           if start<0 or end<0: raise SystemExit("MainActivity loadSettings/settingsPayload boundaries not found")
           load_method = """              private fun loadSettings() {
                   api("GET","/api/settings",null,8000,true){result,_->
@@ -1708,10 +1708,10 @@ jobs:
           s=s[:start]+load_method+s[end:]
 
           # Settings payload only writes controls that currently exist on the active page.
-          start=s.find("private fun buildSettingsPayload(): JSONObject {")
+          start=s.find("private fun settingsPayload(): JSONObject {")
           end=s.find("private fun saveSettings(",start if start>=0 else 0)
           if start<0 or end<0: raise SystemExit("MainActivity settings payload boundaries not found")
-          payload_method = """              private fun buildSettingsPayload(): JSONObject {
+          payload_method = """              private fun settingsPayload(): JSONObject {
                   val next=JSONObject(settings.toString())
                   val server=next.optJSONObject("server") ?: JSONObject()
                   if(this::modeSpinner.isInitialized) server.put("mode",when(modeSpinner.selectedItemPosition){1->"friendWorld";2->"realm";else->"address"})
