@@ -2735,7 +2735,7 @@ jobs:
               marker = "private var authLoginRequested = false"
               if marker not in s:
                   raise SystemExit("MainActivity auth state fields are missing")
-              s = s.replace(marker, marker + "\\n    private var loginRetryPending = false", 1)
+              s = s.replace(marker, marker + chr(10) + "    private var loginRetryPending = false", 1)
 
           old_wait = """if(!serviceReady) {
                           toast("AI 后台服务仍在启动，请稍后重试")
@@ -2765,7 +2765,7 @@ jobs:
           s = p.read_text()
           s = s.replace(
               'versionInput.setText(server.optString("version", "1.26.60"))',
-              'versionInput.setText("1.26.60")\\n                  versionInput.isEnabled = false'
+              'versionInput.setText("1.26.60")' + chr(10) + '                  versionInput.isEnabled = false'
           )
           s = s.replace(
               'server.put("version", versionInput.text.toString().trim().ifBlank { "1.26.60" })',
