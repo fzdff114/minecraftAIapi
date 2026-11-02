@@ -1029,8 +1029,8 @@ jobs:
           end = main.find("private fun renderWorlds", start if start >= 0 else 0)
           if start < 0 or end < 0:
               raise SystemExit("MainActivity Microsoft sign-in methods not found")
-          start = main.rfind("\\n", 0, start) + 1
-          end = main.rfind("\\n", 0, end) + 1
+          start = main.rfind("\n", 0, start) + 1
+          end = main.rfind("\n", 0, end) + 1
           replacement = """    private fun showMicrosoftCode(code: String, link: String) {
                   val intent = Intent(this, MicrosoftLoginActivity::class.java)
                       .putExtra("microsoft_code", code)
