@@ -530,10 +530,11 @@ jobs:
                       setPadding(dp(8), dp(4), dp(8), dp(4))
                       setOnClickListener { action() }
                   }
-                  val lp = LinearLayout.LayoutParams(0, dp(48), 1f)
+                  val horizontal = parent.orientation == LinearLayout.HORIZONTAL
+                  val lp = LinearLayout.LayoutParams(if (horizontal) 0 else -1, dp(48), if (horizontal) 1f else 0f)
                   lp.topMargin = dp(5)
                   lp.bottomMargin = dp(5)
-                  lp.marginEnd = dp(6)
+                  if (horizontal) lp.marginEnd = dp(6)
                   parent.addView(button, lp)
               }
 
@@ -2064,9 +2065,11 @@ jobs:
 
           """
           if "private lateinit var pageHost: FrameLayout" not in s:
-              anchor_field = "              private lateinit var chatInput: EditText\n"
-              if anchor_field not in s: raise SystemExit("MainActivity field insertion anchor missing")
-              s=s.replace(anchor_field,anchor_field+fields,1)
+              field_pos = s.find("private lateinit var chatInput: EditText")
+              if field_pos < 0: raise SystemExit("MainActivity chat input field not found")
+              field_end = s.find("\\n", field_pos)
+              if field_end < 0: raise SystemExit("MainActivity field line ending not found")
+              s = s[:field_end + 1] + fields + s[field_end + 1:]
 
           start=s.find("private fun buildUi()")
           end=s.find("private fun card(",start if start>=0 else 0)
@@ -2244,25 +2247,38 @@ jobs:
           # A login is mandatory before joining; the auto-login has already started on app launch.
           if "private var accountAuthenticated = false" not in s:
               raise SystemExit("MainActivity accountAuthenticated field missing")
-          s=s.replace(
-              '                  val tag = auth.optString("gamertag", value.optString("botName", "Xbox 玩家"))',
-              '                  val tag = auth.optString("gamertag", value.optString("botName", "Xbox 玩家"))\n                  accountAuthenticated = tag.isNotBlank() && auth.optString("xuid").isNotBlank() && auth.optString("xuid") != "0"',
-              1
-          )
-          s=s.replace(
-              '              private fun connectGame() {\n                  saveSettings(true)\n              }',
-              '              private fun connectGame() {\n                  if (!accountAuthenticated) { toast("请先完成 Microsoft / Xbox 登录，登录成功后再加入世界。"); return }\n                  saveSettings(true)\n              }',
-              1
-          )
+          tag_marker = 'val tag = auth.optString("gamertag", value.optString("botName", "Xbox 玩家"))'
+          tag_pos = s.find(tag_marker)
+          if tag_pos < 0:
+              raise SystemExit("MainActivity Xbox profile tag line not found")
+          tag_end = s.find("\\n", tag_pos)
+          if "accountAuthenticated = tag.isNotBlank()" not in s:
+              s = s[:tag_end + 1] + '                      accountAuthenticated = tag.isNotBlank() && auth.optString("xuid").isNotBlank() && auth.optString("xuid") != "0"\\n' + s[tag_end + 1:]
+
+          connect_start = s.find("private fun connectGame()")
+          connect_end = s.find("private fun beginConnection()", connect_start if connect_start >= 0 else 0)
+          if connect_start < 0 or connect_end < 0:
+              raise SystemExit("MainActivity connectGame function not found")
+          connect_block = s[connect_start:connect_end]
+          if "accountAuthenticated" not in connect_block:
+              brace = connect_block.find("{")
+              if brace < 0:
+                  raise SystemExit("MainActivity connectGame body not found")
+              connect_block = connect_block[:brace + 1] + '\\n        if (!accountAuthenticated) { toast("请先完成 Microsoft / Xbox 登录，登录成功后再加入世界。"); return }' + connect_block[brace + 1:]
+              s = s[:connect_start] + connect_block + s[connect_end:]
 
           # After clearing credentials, restart the embedded agent; its startup now immediately signs in again.
-          old = '                                  accountDetails.text = "下一次连接时会重新打开 Microsoft 官方授权页面。"'
-          new = old + '''
-                                  accountAuthenticated = false
-                                  val restart = Intent(this, AgentService::class.java).setAction(AgentService.ACTION_RESTART)
-                                  ContextCompat.startForegroundService(this, restart)'''
-          if old not in s: raise SystemExit("Account switch restart insertion point missing")
-          s=s.replace(old,new,1)
+          clear_start = s.find("private fun clearXboxCache()")
+          clear_end = s.find("private fun updateState(", clear_start if clear_start >= 0 else 0)
+          if clear_start < 0 or clear_end < 0:
+              raise SystemExit("MainActivity account switch function not found")
+          clear_block = s[clear_start:clear_end]
+          if "AgentService.ACTION_RESTART" not in clear_block:
+              marker = 'accountDetails.text = "下次连接时会重新打开 Microsoft 官方授权页面。"'
+              if marker not in clear_block:
+                  raise SystemExit("Account switch status line not found")
+              clear_block = clear_block.replace(marker, marker + '\\n                                  accountAuthenticated = false\\n                                  val restart = Intent(this, AgentService::class.java).setAction(AgentService.ACTION_RESTART)\\n                                  ContextCompat.startForegroundService(this, restart)', 1)
+              s = s[:clear_start] + clear_block + s[clear_end:]
 
           # Drop the app-side custom PNG picker; invoke Minecraft's own Persona Dressing Room via its official deep link.
           skin_start=s.find("private fun chooseSkin()")
