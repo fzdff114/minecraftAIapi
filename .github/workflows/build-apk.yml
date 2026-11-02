@@ -91,15 +91,15 @@ jobs:
           s = p.read_text()
           if "versionCode 20003" not in s or "versionName '2.0.0-alpha.4'" not in s:
               raise SystemExit("App 版本号不是预期的 alpha.4，停止构建")
-          s = s.replace("versionCode 20003", "versionCode 20009", 1)
-          s = s.replace("versionName '2.0.0-alpha.4'", "versionName '2.0.0-alpha.10'", 1)
+          s = s.replace("versionCode 20003", "versionCode 20010", 1)
+          s = s.replace("versionName '2.0.0-alpha.4'", "versionName '2.0.0-alpha.11'", 1)
           p.write_text(s)
 
           # Use the Microsoft device-code flow provided by bedrock-protocol.
           # OnMsaCode is the actual OAuth callback; open its official verification URI once per code.
           p = Path("agent/public/index.html")
           s = p.read_text()
-          s = s.replace("2.0.0-alpha.3 · 本机控制台", "2.0.0-alpha.10 · 本机控制台")
+          s = s.replace("2.0.0-alpha.3 · 本机控制台", "2.0.0-alpha.11 · 本机控制台")
           old_state = "let settings=null,lastChatCount=0,lastLogs='';"
           new_state = "let settings=null,lastChatCount=0,lastLogs='',lastOpenedMicrosoftCode='';"
           if old_state not in s:
@@ -1384,6 +1384,500 @@ jobs:
           manifest.write_text(m)
           PY
 
+      - name: Add startup Microsoft pre-login, saved Xbox identity and Minecraft-style start menu
+        working-directory: BlockmateAI-Android
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          # 1. Perform Microsoft/Xbox login independently of server connection.
+          p = Path("agent/src/bedrock-transport.ts")
+          s = p.read_text()
+
+          if "private authflow:any=null;" not in s:
+              anchor = "  private authInfo: XboxAccountInfo|null=null;"
+              if anchor not in s: raise SystemExit("BedrockTransport auth state insertion point not found")
+              s = s.replace(anchor, anchor + "\n  private authflow:any=null;", 1)
+
+          if "async login():Promise<XboxAccountInfo>" not in s:
+              anchor = "  async connect():Promise<void> {"
+              login_method = """  async login():Promise<XboxAccountInfo> {
+                if (this.authInfo?.xuid && this.authInfo.gamertag) return {...this.authInfo};
+                const authlib=require('prismarine-auth');
+                const crypto=require('node:crypto');
+                const settings=this.getSettings();
+                this.hooks.status('正在启动 Minecraft Android 的 Microsoft / Xbox 登录…');
+                this.authflow ??= new authlib.Authflow(settings.server.username,this.authFolder,{
+                  flow:'live',
+                  authTitle:authlib.Titles.MinecraftAndroid,
+                  deviceType:'Android'
+                },(data:any)=>{
+                  const d:DeviceCode={
+                    userCode:String(data.user_code ?? data.userCode ?? ''),
+                    verificationUri:String(data.verification_uri ?? data.verificationUri ?? 'https://www.microsoft.com/link'),
+                    message:String(data.message ?? '')
+                  };
+                  this.hooks.deviceCode(d);
+                  this.hooks.status('请在 Microsoft 官方页面完成账号授权，登录代码：'+d.userCode);
+                });
+
+                // Acquire and cache a full Bedrock token chain before asking the user to configure a server.
+                const keyPair=crypto.generateKeyPairSync('ec',{namedCurve:'secp384r1'});
+                const bedrockLogin=await this.authflow.getMinecraftBedrockToken(keyPair.publicKey);
+                const xsts=await this.authflow.getXboxToken('https://multiplayer.minecraft.net/');
+                const chain=Array.isArray(bedrockLogin?.chain)?bedrockLogin.chain:[];
+                let profile:any={};
+                if(chain[1]) {
+                  try {
+                    const parts=String(chain[1]).split('.');
+                    profile=JSON.parse(Buffer.from(parts[1],'base64url').toString('utf8'));
+                  } catch {}
+                }
+                const extra=profile?.extraData ?? {};
+                const expiryValue=xsts?.expiresOn;
+                const expiryDate=typeof expiryValue==='number'
+                  ? new Date(expiryValue < 100000000000 ? expiryValue*1000 : expiryValue)
+                  : new Date(expiryValue);
+                this.actualGamertag=String(extra.displayName ?? settings.server.username);
+                this.authInfo={
+                  gamertag:this.actualGamertag,
+                  uuid:String(extra.identity ?? ''),
+                  xuid:String(extra.XUID ?? xsts?.userXUID ?? ''),
+                  userHash:String(xsts?.userHash ?? ''),
+                  titleId:'0000000048183522',
+                  platform:'Android',
+                  expiresAt:Number.isNaN(expiryDate.getTime()) ? String(expiryValue ?? '') : expiryDate.toISOString(),
+                  bedrockChainReady:chain.length>=2,
+                  multiplayerTokenReady:Boolean(bedrockLogin?.token)
+                };
+
+                // prismarine-auth persists refreshable credentials in its private token cache.
+                // Keep only non-secret account metadata in this companion file.
+                const fs=require('node:fs');
+                const path=require('node:path');
+                fs.mkdirSync(this.authFolder,{recursive:true,mode:0o700});
+                fs.writeFileSync(path.join(this.authFolder,'account-info.json'),
+                  JSON.stringify(this.authInfo,null,2),{mode:0o600});
+                this.hooks.deviceCode(null);
+                this.hooks.status('Microsoft / Xbox 登录已完成并缓存：'+this.actualGamertag);
+                this.hooks.log('已保存 Xbox 身份：Gamertag='+this.authInfo.gamertag+'；XUID='+this.authInfo.xuid+'；Bedrock 链='+this.authInfo.bedrockChainReady+'；多人令牌='+this.authInfo.multiplayerTokenReady);
+                return {...this.authInfo};
+              }
+
+          """
+              if anchor not in s: raise SystemExit("BedrockTransport connect method anchor not found")
+              s=s.replace(anchor,login_method+anchor,1)
+
+          # Reuse the already-authenticated Microsoft flow when the user later joins a Bedrock server.
+          pattern = r"const authlib=require\\('prismarine-auth'\\);\\s*const authflow=new authlib\\.Authflow\\(settings\\.server\\.username,this\\.authFolder,\\{.*?\\},options\\.onMsaCode\\);\\s*options\\.authflow=authflow;"
+          replacement = """const authlib=require('prismarine-auth');
+              const authflow=this.authflow ?? new authlib.Authflow(settings.server.username,this.authFolder,{
+                flow:'live',
+                authTitle:authlib.Titles.MinecraftAndroid,
+                deviceType:'Android'
+              },options.onMsaCode);
+              this.authflow=authflow;
+              options.authflow=authflow;"""
+          s2,count=re.subn(pattern,lambda _:replacement,s,count=1,flags=re.S)
+          if count==0:
+              # Accept a source already patched to use this.authflow.
+              if "options.authflow=this.authflow" not in s:
+                  raise SystemExit("Bedrock connection Authflow reuse point not found")
+              s2=s
+          s=s2
+          p.write_text(s)
+
+          # 2. Expose a login-only API; this route does not attempt a server connection.
+          p=Path("agent/src/dashboard.ts")
+          s=p.read_text()
+          if "login:()=>Promise<void>;" not in s:
+              anchor="  connect:()=>Promise<void>;disconnect:()=>Promise<void>;sendChat:(message:string)=>Promise<void>;"
+              if anchor not in s: raise SystemExit("DashboardHooks action type anchor not found")
+              s=s.replace(anchor,"  login:()=>Promise<void>;\n"+anchor,1)
+          if "case '/api/auth/login':" not in s:
+              anchor="          case '/api/connect': await this.hooks.connect();this.json(res,200,{ok:true});return;"
+              new="""          case '/api/auth/login': {
+                    const account=await this.hooks.login();
+                    this.json(res,200,{ok:true,account});return;
+                  }
+          case '/api/connect': await this.hooks.connect();this.json(res,200,{ok:true});return;"""
+              if anchor not in s: raise SystemExit("Dashboard connect API route anchor not found")
+              s=s.replace(anchor,new,1)
+          p.write_text(s)
+
+          p=Path("agent/src/main.ts")
+          s=p.read_text()
+          if "login:async()=>{await transport.login();}," not in s:
+              anchor="  connect:async()=>{await runtime.start();},"
+              if anchor not in s: raise SystemExit("Main dashboard connect hook anchor not found")
+              s=s.replace(anchor,anchor+"\n  login:async()=>{await transport.login();},",1)
+          p.write_text(s)
+
+          # 3. Replace the stacked settings screen with a Minecraft-style start screen and real subpages.
+          p=Path("app/src/main/java/com/blockmate/ai/MainActivity.kt")
+          s=p.read_text()
+
+          # Add navigation and login lifecycle state.
+          if "private lateinit var pageRoot: LinearLayout" not in s:
+              anchor="              private var stopping = false"
+              if anchor not in s: raise SystemExit("MainActivity lifecycle state anchor not found")
+              s=s.replace(anchor,anchor+"\n              private lateinit var pageRoot: LinearLayout\n              private var authLoginRequested = false\n              private var authAvailable = false\n              private var homeAccountText: TextView? = null",1)
+
+          # Replace only the old buildUi method, leaving the tested API and service client helpers in place.
+          start=s.find("              private fun buildUi() {")
+          end=s.find("              private fun card(",start if start>=0 else 0)
+          if start<0 or end<0: raise SystemExit("MainActivity buildUi/card boundaries not found")
+          new_ui = """              private fun buildUi() {
+                  val scroll=ScrollView(this).apply {
+                      setBackgroundColor(Color.rgb(12,20,29))
+                      isFillViewport=true
+                  }
+                  pageRoot=LinearLayout(this).apply {
+                      orientation=LinearLayout.VERTICAL
+                      setPadding(dp(18),dp(20),dp(18),dp(34))
+                      background=GradientDrawable(
+                          GradientDrawable.Orientation.TL_BR,
+                          intArrayOf(0xFF263F4C.toInt(),0xFF1B2F38.toInt(),0xFF111D29.toInt())
+                      )
+                  }
+                  scroll.addView(pageRoot)
+                  setContentView(scroll)
+                  showHomePage()
+              }
+
+              private fun addMenuButton(parent: LinearLayout, label: String, detail: String, action: () -> Unit) {
+                  val button=LinearLayout(this).apply {
+                      orientation=LinearLayout.VERTICAL
+                      gravity=Gravity.CENTER_VERTICAL
+                      setPadding(dp(18),dp(8),dp(18),dp(8))
+                      background=GradientDrawable(
+                          GradientDrawable.Orientation.TOP_BOTTOM,
+                          intArrayOf(0xFFE4E4E4.toInt(),0xFFBFC5C7.toInt())
+                      ).apply {
+                          cornerRadius=dp(5).toFloat()
+                          setStroke(dp(1),0xFF56636B.toInt())
+                      }
+                      elevation=dp(3).toFloat()
+                      setOnClickListener { action() }
+                  }
+                  val title=TextView(this).apply {
+                      text=label
+                      textSize=19f
+                      setTextColor(0xFF20282C.toInt())
+                      setTypeface(typeface,Typeface.BOLD)
+                  }
+                  val subtitle=TextView(this).apply {
+                      text=detail
+                      textSize=12f
+                      setTextColor(0xFF4D5A61.toInt())
+                  }
+                  button.addView(title)
+                  button.addView(subtitle)
+                  val lp=LinearLayout.LayoutParams(-1,dp(64))
+                  lp.topMargin=dp(9)
+                  parent.addView(button,lp)
+              }
+
+              private fun addPageHeader(parent: LinearLayout, title: String, subtitle: String) {
+                  val header=card(parent,title)
+                  addText(header,subtitle,12f,false,0xFFB4C2CC.toInt())
+                  val back=row(header)
+                  addButton(back,"返回主菜单",false){showHomePage()}
+              }
+
+              private fun showHomePage() {
+                  pageRoot.removeAllViews()
+                  pageRoot.background=GradientDrawable(
+                      GradientDrawable.Orientation.TL_BR,
+                      intArrayOf(0xFF263F4C.toInt(),0xFF1A3039.toInt(),0xFF101B27.toInt())
+                  )
+                  val banner=LinearLayout(this).apply {
+                      orientation=LinearLayout.VERTICAL
+                      gravity=Gravity.CENTER
+                      setPadding(dp(10),dp(30),dp(10),dp(24))
+                  }
+                  pageRoot.addView(banner,LinearLayout.LayoutParams(-1,dp(190)))
+                  val logo=addText(banner,"MINECRAFT",36f,true,Color.WHITE)
+                  logo.gravity=Gravity.CENTER
+                  logo.letterSpacing=0.04f
+                  logo.setShadowLayer(4f,2f,3f,0xCC000000.toInt())
+                  val edition=addText(banner,"BEDROCK EDITION",12f,true,0xFFE3EAD9.toInt())
+                  edition.gravity=Gravity.CENTER
+                  val product=addText(banner,"方块伙伴 AI 2.0",20f,true,Color.WHITE)
+                  product.gravity=Gravity.CENTER
+
+                  homeAccountText=addText(pageRoot,"正在检查 Microsoft / Xbox 账号…",14f,true,0xFFE8F0F4.toInt())
+                  homeAccountText?.gravity=Gravity.CENTER
+                  serviceStatus=addText(pageRoot,"正在启动本机 AI 服务…",12f,false,0xFFB5C3CC.toInt())
+                  serviceStatus.gravity=Gravity.CENTER
+
+                  addMenuButton(pageRoot,"开始游戏","配置 AI 玩家并加入 Bedrock 世界") { showConnectPage() }
+                  addMenuButton(pageRoot,"切换皮肤","打开 Minecraft 原生角色与皮肤更衣室") { openMinecraftProfile() }
+                  addMenuButton(pageRoot,"设置","AI 模型、行为与运行选项") { showSettingsPage() }
+                  addMenuButton(pageRoot,if(authAvailable) "切换 Microsoft 账号" else "Microsoft 账号登录",
+                      if(authAvailable) "当前账号已缓存，可重新授权另一个账号" else "启动 Microsoft 官方账号授权") {
+                      if(authAvailable) clearXboxCache() else requestMicrosoftLogin()
+                  }
+                  val footer=addText(pageRoot,"AI 联机使用独立 Bedrock 1.26.x 客户端；Minecraft 原生更衣室由已安装的 Minecraft 应用打开。",11f,false,0xFF8FA1AD.toInt())
+                  footer.gravity=Gravity.CENTER
+              }
+
+              private fun showConnectPage() {
+                  pageRoot.removeAllViews()
+                  addPageHeader(pageRoot,"游戏","选择 AI 玩家要加入的 Bedrock 世界。此处保留当前新版独立联机实现。")
+                  gameStatus=addText(pageRoot,"等待连接",14f,true,0xFFCBD5E1.toInt())
+                  val connection=card(pageRoot,"加入方式")
+                  modeSpinner=addSpinner(connection,arrayOf("服务器 IP / 端口","Xbox 好友世界","Realm"))
+                  hostInput=addEdit(connection,"服务器地址 / IP","127.0.0.1")
+                  val serverRow=row(connection)
+                  portInput=addEdit(serverRow,"UDP 端口","19132",false,1f)
+                  versionInput=addEdit(serverRow,"Bedrock 版本","1.26.60",false,1f)
+                  usernameInput=addEdit(connection,"AI 玩家显示昵称","BlockmateAI")
+                  transportSpinner=addSpinner(connection,arrayOf("自动检测（推荐）","RakNet","NetherNet"))
+                  val controls=row(connection)
+                  addButton(controls,"保存连接设置",false){saveSettings(false)}
+                  addButton(controls,"登录并加入世界",true){connectGame()}
+                  addButton(connection,"断开游戏连接",false){disconnectGame()}
+                  worldsPanel=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL}
+                  connection.addView(worldsPanel)
+                  if(settingsLoaded) populateSettings(settings)
+                  if(!authAvailable) {
+                      addText(connection,"Microsoft 账号尚未登录。应用会先完成账号授权，再建立游戏连接。",12f,false,0xFFF3D18B.toInt())
+                      val loginRow=row(connection)
+                      addButton(loginRow,"立即登录 Microsoft",true){requestMicrosoftLogin()}
+                  }
+              }
+
+              private fun showSettingsPage() {
+                  pageRoot.removeAllViews()
+                  addPageHeader(pageRoot,"设置","只在进入设置页时显示配置；启动应用不会再停留在配置表单。")
+                  val aiCard=card(pageRoot,"AI 服务")
+                  apiUrlInput=addEdit(aiCard,"AI API 地址（HTTPS）","https://api.openai.com/v1")
+                  apiKeyInput=addEdit(aiCard,"AI API Key（留空表示保留原密钥）","",true)
+                  modelInput=addEdit(aiCard,"模型名称","gpt-4.1-mini")
+                  val aiRow=row(aiCard)
+                  addButton(aiRow,"保存 AI 设置",true){saveSettings(false)}
+                  addButton(aiRow,"测试 API",false){testAi()}
+
+                  val behavior=card(pageRoot,"AI 行为")
+                  autonomySwitch=addSwitch(behavior,"自主生存")
+                  attackSwitch=addSwitch(behavior,"攻击敌对生物")
+                  collectSwitch=addSwitch(behavior,"收集掉落物")
+                  exploreSwitch=addSwitch(behavior,"主动探索")
+                  eatSwitch=addSwitch(behavior,"饥饿时进食")
+                  addButton(behavior,"保存行为设置",true){saveSettings(false)}
+
+                  val logs=card(pageRoot,"运行日志")
+                  logsView=addText(logs,"等待后台日志…",12f,false,0xFF9CAEC2.toInt())
+                  if(settingsLoaded) populateSettings(settings)
+              }
+
+          """
+          s=s[:start]+new_ui+s[end:]
+
+          # Add full-width style back button overload is avoided; the generic API methods are reused.
+          # Load settings without touching controls that are not currently on screen.
+          start=s.find("              private fun loadSettings() {")
+          end=s.find("              private fun buildSettingsPayload()",start if start>=0 else 0)
+          if start<0 or end<0: raise SystemExit("MainActivity loadSettings/settingsPayload boundaries not found")
+          load_method = """              private fun loadSettings() {
+                  api("GET","/api/settings",null,8000,true){result,_->
+                      if(result!=null){
+                          settings=result
+                          settingsLoaded=true
+                          populateSettings(result)
+                      }
+                  }
+              }
+
+              private fun populateSettings(value: JSONObject) {
+                  val server=value.optJSONObject("server") ?: JSONObject()
+                  if(this::hostInput.isInitialized) hostInput.setText(server.optString("host","127.0.0.1"))
+                  if(this::portInput.isInitialized) portInput.setText(server.optString("port","19132"))
+                  if(this::versionInput.isInitialized) versionInput.setText(server.optString("version","1.26.60"))
+                  if(this::usernameInput.isInitialized) usernameInput.setText(server.optString("username","BlockmateAI"))
+                  if(this::modeSpinner.isInitialized) modeSpinner.setSelection(when(server.optString("mode","address")){"friendWorld"->1;"realm"->2;else->0})
+                  if(this::transportSpinner.isInitialized) transportSpinner.setSelection(when(server.optString("transport","auto")){"raknet"->1;"nethernet"->2;else->0})
+                  val ai=value.optJSONObject("ai") ?: JSONObject()
+                  if(this::apiUrlInput.isInitialized) apiUrlInput.setText(ai.optString("baseUrl","https://api.openai.com/v1"))
+                  if(this::apiKeyInput.isInitialized) apiKeyInput.setText("")
+                  if(this::modelInput.isInitialized) modelInput.setText(ai.optString("model","gpt-4.1-mini"))
+                  val behavior=value.optJSONObject("behavior") ?: JSONObject()
+                  if(this::autonomySwitch.isInitialized) autonomySwitch.isChecked=behavior.optBoolean("autonomy",true)
+                  if(this::attackSwitch.isInitialized) attackSwitch.isChecked=behavior.optBoolean("attackHostiles",true)
+                  if(this::collectSwitch.isInitialized) collectSwitch.isChecked=behavior.optBoolean("collectDrops",true)
+                  if(this::exploreSwitch.isInitialized) exploreSwitch.isChecked=behavior.optBoolean("explore",true)
+                  if(this::eatSwitch.isInitialized) eatSwitch.isChecked=behavior.optBoolean("eatWhenHungry",true)
+              }
+
+          """
+          s=s[:start]+load_method+s[end:]
+
+          # Settings payload only writes controls that currently exist on the active page.
+          start=s.find("              private fun buildSettingsPayload(): JSONObject {")
+          end=s.find("              private fun saveSettings(",start if start>=0 else 0)
+          if start<0 or end<0: raise SystemExit("MainActivity settings payload boundaries not found")
+          payload_method = """              private fun buildSettingsPayload(): JSONObject {
+                  val next=JSONObject(settings.toString())
+                  val server=next.optJSONObject("server") ?: JSONObject()
+                  if(this::modeSpinner.isInitialized) server.put("mode",when(modeSpinner.selectedItemPosition){1->"friendWorld";2->"realm";else->"address"})
+                  if(this::hostInput.isInitialized) server.put("host",hostInput.text.toString().trim())
+                  if(this::portInput.isInitialized) server.put("port",portInput.text.toString().trim().toIntOrNull() ?: 19132)
+                  if(this::versionInput.isInitialized) server.put("version",versionInput.text.toString().trim().ifBlank{"1.26.60"})
+                  if(this::usernameInput.isInitialized) server.put("username",usernameInput.text.toString().trim().ifBlank{"BlockmateAI"})
+                  if(this::transportSpinner.isInitialized) server.put("transport",when(transportSpinner.selectedItemPosition){1->"raknet";2->"nethernet";else->"auto"})
+                  next.put("server",server)
+
+                  val ai=next.optJSONObject("ai") ?: JSONObject()
+                  if(this::apiUrlInput.isInitialized) ai.put("baseUrl",apiUrlInput.text.toString().trim())
+                  if(this::apiKeyInput.isInitialized && apiKeyInput.text.toString().isNotBlank()) ai.put("apiKey",apiKeyInput.text.toString().trim())
+                  if(this::modelInput.isInitialized) ai.put("model",modelInput.text.toString().trim().ifBlank{"gpt-4.1-mini"})
+                  next.put("ai",ai)
+
+                  val behavior=next.optJSONObject("behavior") ?: JSONObject()
+                  if(this::autonomySwitch.isInitialized) behavior.put("autonomy",autonomySwitch.isChecked)
+                  if(this::attackSwitch.isInitialized) behavior.put("attackHostiles",attackSwitch.isChecked)
+                  if(this::collectSwitch.isInitialized) behavior.put("collectDrops",collectSwitch.isChecked)
+                  if(this::exploreSwitch.isInitialized) behavior.put("explore",exploreSwitch.isChecked)
+                  if(this::eatSwitch.isInitialized) behavior.put("eatWhenHungry",eatSwitch.isChecked)
+                  next.put("behavior",behavior)
+                  settings=next
+                  return next
+              }
+
+          """
+          s=s[:start]+payload_method+s[end:]
+
+          # Start account authentication as soon as the local API is ready; don't wait for server settings.
+          if "private fun requestMicrosoftLogin()" not in s:
+              anchor="              private fun showMicrosoftCode(code: String, link: String) {"
+              login_request = """              private fun requestMicrosoftLogin() {
+                  if(!serviceReady) {
+                      toast("AI 后台服务仍在启动，请稍后重试")
+                      return
+                  }
+                  if(authLoginRequested) return
+                  authLoginRequested=true
+                  homeAccountText?.text="正在打开 Microsoft 官方账号授权…"
+                  api("POST","/api/auth/login",JSONObject(),240000){result,error->
+                      if(error!=null) {
+                          authLoginRequested=false
+                          homeAccountText?.text="Microsoft 登录失败：" + error
+                          toast("Microsoft 登录失败：" + error)
+                      } else {
+                          authAvailable=true
+                          homeAccountText?.text="Microsoft / Xbox 登录已保存"
+                          toast("Microsoft / Xbox 登录已完成，账号信息已缓存")
+                      }
+                  }
+              }
+
+          """
+              if anchor not in s: raise SystemExit("MainActivity Microsoft code screen insertion point not found")
+              s=s.replace(anchor,login_request+anchor,1)
+
+          # State polling auto-starts Microsoft authorization; all page fields are guarded by initialization checks.
+          start=s.find("              private fun refreshState() {")
+          end=s.find("              private fun loadSettings()",start if start>=0 else 0)
+          if start<0 or end<0: raise SystemExit("MainActivity refreshState/loadSettings boundaries not found")
+          refresh_method = """              private fun refreshState() {
+                  api("GET","/api/state",null,8000,true){result,error->
+                      if(result==null) {
+                          serviceReady=false
+                          if(this::serviceStatus.isInitialized) serviceStatus.text="后台服务正在启动：" + (error ?: "等待本机接口")
+                          return@api
+                      }
+                      serviceReady=true
+                      if(this::serviceStatus.isInitialized) serviceStatus.text="后台服务已启动"
+                      if(!settingsLoaded) loadSettings()
+                      if(result.optJSONObject("authInfo")!=null) {
+                          authAvailable=true
+                          authLoginRequested=true
+                      } else if(result.optJSONObject("deviceCode")==null && !authLoginRequested) {
+                          requestMicrosoftLogin()
+                      }
+                      updateState(result)
+                  }
+              }
+
+          """
+          s=s[:start]+refresh_method+s[end:]
+
+          # Update screen data only when a page actually owns the target widget.
+          start=s.find("              private fun updateState(value: JSONObject) {")
+          end=s.find("              private fun showMicrosoftCode(",start if start>=0 else 0)
+          if start<0 or end<0: raise SystemExit("MainActivity updateState/showMicrosoftCode boundaries not found")
+          update_method = """              private fun updateState(value: JSONObject) {
+                  val status=value.optString("status","等待连接")
+                  if(this::gameStatus.isInitialized) gameStatus.text=status
+                  val auth=value.optJSONObject("authInfo")
+                  if(auth!=null) {
+                      authAvailable=true
+                      authLoginRequested=true
+                      val tag=auth.optString("gamertag",value.optString("botName","Xbox 玩家"))
+                      homeAccountText?.text="已登录 Microsoft / Xbox： " + tag
+                      if(this::accountStatus.isInitialized) accountStatus.text="Xbox 已登录：" + tag
+                      if(this::accountDetails.isInitialized) accountDetails.text=listOf(
+                          "平台：" + auth.optString("platform","Android"),
+                          "Gamertag：" + tag,
+                          "XUID：" + auth.optString("xuid",""),
+                          "UUID：" + auth.optString("uuid",""),
+                          "Bedrock 身份链：" + if(auth.optBoolean("bedrockChainReady")) "已缓存" else "未载入",
+                          "多人凭据：" + if(auth.optBoolean("multiplayerTokenReady")) "已缓存" else "未载入"
+                      ).joinToString("\\n")
+                  } else {
+                      homeAccountText?.text=if(authLoginRequested) "正在等待 Microsoft / Xbox 授权…" else "尚未登录 Microsoft 账号"
+                      if(this::accountStatus.isInitialized) accountStatus.text="等待 Microsoft 登录"
+                  }
+
+                  val code=value.optJSONObject("deviceCode")
+                  if(code!=null) {
+                      val userCode=code.optString("userCode")
+                      if(userCode.isNotBlank() && userCode!=lastDeviceCode) {
+                          lastDeviceCode=userCode
+                          showMicrosoftCode(userCode,code.optString("verificationUri","https://www.microsoft.com/link"))
+                      }
+                  } else if(auth!=null) {
+                      lastDeviceCode=""
+                  }
+
+                  if(this::worldsPanel.isInitialized) renderWorlds(value.optJSONArray("worlds") ?: JSONArray())
+                  if(this::logsView.isInitialized) {
+                      val lines=ArrayList<String>()
+                      val sys=value.optJSONArray("systemLogs") ?: JSONArray()
+                      for(i in maxOf(0,sys.length()-8) until sys.length()) lines.add(sys.optString(i))
+                      val chat=value.optJSONArray("logs") ?: JSONArray()
+                      for(i in maxOf(0,chat.length()-6) until chat.length()) {
+                          val item=chat.optJSONObject(i) ?: continue
+                          lines.add(item.optString("sender") + ": " + item.optString("message"))
+                      }
+                      logsView.text=lines.joinToString("\\n").ifBlank{"尚无运行日志"}
+                  }
+              }
+
+          """
+          s=s[:start]+update_method+s[end:]
+
+          # Ensure the game connection never starts its own separate login prompt if pre-login has not finished.
+          old_connect = """              private fun connectGame() {
+                  saveSettings(true)
+              }"""
+          new_connect = """              private fun connectGame() {
+                  if(!authAvailable) {
+                      requestMicrosoftLogin()
+                      toast("先完成 Microsoft 官方账号授权，再加入世界")
+                      return
+                  }
+                  saveSettings(true)
+              }"""
+          if old_connect in s:
+              s=s.replace(old_connect,new_connect,1)
+          else:
+              if "private fun connectGame()" not in s: raise SystemExit("MainActivity connectGame method not found")
+          p.write_text(s)
+          PY
+
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
@@ -1502,7 +1996,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: BlockmateAI-2.0-alpha.10-arm64-debug-apk
+          name: BlockmateAI-2.0-alpha.11-arm64-debug-apk
           path: BlockmateAI-Android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
@@ -1510,8 +2004,8 @@ jobs:
       - name: Publish public GitHub Release download
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: blockmate-ai-2.0-alpha.10-public-20261102
-          name: Blockmate AI 2.0 alpha.10 APK (Public Download)
+          tag_name: blockmate-ai-2.0-alpha.11-public-20261102
+          name: Blockmate AI 2.0 alpha.11 APK (Public Download)
           draft: false
           prerelease: true
           files: BlockmateAI-Android/app/build/outputs/apk/debug/app-debug.apk
