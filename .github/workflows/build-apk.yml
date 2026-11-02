@@ -2441,7 +2441,7 @@ jobs:
                   }
                   scroll.addView(frame, android.view.ViewGroup.LayoutParams(-1, -1))
 
-                  val background = ImageView(this).apply {
+                  val panoramaImage = ImageView(this).apply {
                       scaleType = ImageView.ScaleType.CENTER_CROP
                       contentDescription = "Minecraft 游戏场景背景"
                       try {
@@ -2457,7 +2457,7 @@ jobs:
                       setBackgroundColor(0xFF263A3D.toInt())
                   }
                   }
-                  frame.addView(background, android.view.ViewGroup.LayoutParams(-1, -1))
+                  frame.addView(panoramaImage, android.view.ViewGroup.LayoutParams(-1, -1))
 
                   // Darken the panorama like the original account sign-in splash.
                   frame.addView(View(this).apply {
