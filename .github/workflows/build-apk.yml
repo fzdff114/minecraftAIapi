@@ -1470,7 +1470,10 @@ jobs:
               s=s.replace(anchor,login_method+anchor,1)
 
           # Reuse the already-authenticated Microsoft flow when the user later joins a Bedrock server.
-          pattern = r"const authlib=require\('prismarine-auth'\);\s*const authflow=new authlib\.Authflow\(settings\.server\.username,this\.authFolder,\{.*?\},options\.onMsaCode\);\s*options\.authflow=authflow;"
+          old_auth_start="const authlib=require('prismarine-auth');"
+          old_auth_end="options.authflow=authflow;"
+          auth_start=s.find(old_auth_start)
+          auth_end=s.find(old_auth_end,auth_start if auth_start>=0 else 0)
           replacement = """const authlib=require('prismarine-auth');
               const authflow=this.authflow ?? new authlib.Authflow(settings.server.username,this.authFolder,{
                 flow:'live',
@@ -1479,13 +1482,10 @@ jobs:
               },options.onMsaCode);
               this.authflow=authflow;
               options.authflow=authflow;"""
-          s2,count=re.subn(pattern,lambda _:replacement,s,count=1,flags=re.S)
-          if count==0:
-              # Accept a source already patched to use this.authflow.
-              if "options.authflow=this.authflow" not in s:
-                  raise SystemExit("Bedrock connection Authflow reuse point not found")
-              s2=s
-          s=s2
+          if auth_start>=0 and auth_end>=auth_start:
+              s=s[:auth_start]+replacement+s[auth_end+len(old_auth_end):]
+          elif "options.authflow=this.authflow" not in s:
+              raise SystemExit("Bedrock connection Authflow reuse point not found")
           p.write_text(s)
 
           # 2. Expose a login-only API; this route does not attempt a server connection.
