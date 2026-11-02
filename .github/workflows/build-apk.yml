@@ -22,6 +22,15 @@ jobs:
           test -f BlockmateAI-Android/settings.gradle
           test -f BlockmateAI-Android/app/build.gradle
 
+      - name: Diagnose Android embedded backend and API port
+        working-directory: BlockmateAI-Android
+        run: |
+          echo '--- AgentService ---'
+          sed -n '1,280p' app/src/main/java/com/blockmate/ai/AgentService.kt
+          echo '--- MainActivity launch ---'
+          sed -n '1,260p' app/src/main/java/com/blockmate/ai/MainActivity.kt
+          echo '--- Dashboard default port ---'
+          grep -RInE 'dashboard.*port|listen\(|8765|8787|8080|127\.0\.0\.1' agent/src agent/public app/src/main/java || true
       - name: Fix agent data extraction, launch Microsoft OAuth page, and auto-start backend
         working-directory: BlockmateAI-Android
         run: |
