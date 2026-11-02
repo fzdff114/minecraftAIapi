@@ -2061,7 +2061,6 @@ jobs:
               private lateinit var aiPage: ScrollView
               private lateinit var behaviorPage: ScrollView
               private lateinit var logsPage: ScrollView
-              private var accountAuthenticated = false
 
           """
           if "private lateinit var pageHost: FrameLayout" not in s:
@@ -2244,24 +2243,7 @@ jobs:
           '''
           s=s[:start]+textwrap.dedent(ui)+s[end:]
 
-          # A login is mandatory before joining; the auto-login has already started on app launch.
-          if "private var accountAuthenticated = false" not in s:
-              raise SystemExit("MainActivity accountAuthenticated field missing")
-          auth_marker = 'val auth = value.optJSONObject("authInfo")'
-          auth_pos = s.find(auth_marker)
-          if auth_pos < 0:
-              raise SystemExit("MainActivity authInfo state line not found")
-          auth_line_end = s.find("\n", auth_pos)
-          auth_line_start = s.rfind("\n", 0, auth_pos) + 1
-          indent = s[auth_line_start:auth_pos]
-          if "accountAuthenticated = auth != null" not in s:
-              s = s[:auth_line_end + 1] + indent + 'accountAuthenticated = auth != null && auth.optString("xuid").isNotBlank() && auth.optString("xuid") != "0"\n' + s[auth_line_end + 1:]
-
-          connect_pattern = r'(private fun connectGame\(\)\s*\{\s*)'
-          connect_replacement = r'\1if (!accountAuthenticated) { toast("请先完成 Microsoft / Xbox 登录，登录成功后再加入世界。"); return }\n'
-          s, connect_count = re.subn(connect_pattern, connect_replacement, s, count=1)
-          if connect_count != 1:
-              raise SystemExit("MainActivity connectGame function not found")
+          # The app auto-authenticates at startup; the server connection reuses the same Authflow cache.
 
           # After clearing credentials, restart the embedded agent; its startup now immediately signs in again.
           clear_start = s.find("private fun clearXboxCache()")
@@ -2273,7 +2255,7 @@ jobs:
               marker = 'accountDetails.text = "下次连接时会重新打开 Microsoft 官方授权页面。"'
               if marker not in clear_block:
                   raise SystemExit("Account switch status line not found")
-              clear_block = clear_block.replace(marker, marker + '\n                                  accountAuthenticated = false\n                                  val restart = Intent(this, AgentService::class.java).setAction(AgentService.ACTION_RESTART)\n                                  ContextCompat.startForegroundService(this, restart)', 1)
+              clear_block = clear_block.replace(marker, marker + '\n                                  val restart = Intent(this, AgentService::class.java).setAction(AgentService.ACTION_RESTART)\n                                  ContextCompat.startForegroundService(this, restart)', 1)
               s = s[:clear_start] + clear_block + s[clear_end:]
 
           # Drop the app-side custom PNG picker; invoke Minecraft's own Persona Dressing Room via its official deep link.
