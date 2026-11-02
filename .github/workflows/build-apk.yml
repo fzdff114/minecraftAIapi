@@ -1321,19 +1321,12 @@ jobs:
                   "import java.util.concurrent.TimeUnit\nimport java.net.HttpURLConnection\nimport java.net.URL",
                   1
               )
-          old_start = """                val child = builder.start()
-                process = child
-                isBackendAlive = true"""
-          new_start = """                val child = builder.start()
-                process = child
-                check(awaitDashboardReady(child, 75000L)) {
-                    "内置 AI 服务 75 秒内未打开本机控制接口。请查看运行日志，检查 Node 启动错误。"
-                }
-                isBackendAlive = true"""
+          old_start = r"(?m)^(\\s*)val child = builder\\.start\\(\\)\\r?\\n\\s*process = child\\r?\\n\\s*isBackendAlive = true"
+          new_start = r"\\1val child = builder.start()\\n\\1process = child\\n\\1check(awaitDashboardReady(child, 75000L)) {\\n\\1    \"内置 AI 服务 75 秒内未打开本机控制接口。请查看运行日志，检查 Node 启动错误。\"\\n\\1}\\n\\1isBackendAlive = true"
           if "awaitDashboardReady(child, 75000L)" not in agent_service:
-              if old_start not in agent_service:
+              agent_service, count = re.subn(old_start, new_start, agent_service, count=1)
+              if count != 1:
                   raise SystemExit("AgentService Node launch block not found")
-              agent_service = agent_service.replace(old_start, new_start, 1)
 
           helper_anchor = "    private fun installAssets(assetPath: String, target: File) {"
           helper = """    private fun awaitDashboardReady(child: Process, timeoutMs: Long): Boolean {
