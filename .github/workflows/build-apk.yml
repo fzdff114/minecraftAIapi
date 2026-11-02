@@ -1745,34 +1745,57 @@ jobs:
           """
           s=s[:start]+payload_method+s[end:]
 
-          # Start account authentication as soon as the local API is ready; don't wait for server settings.
+          # Insert this method immediately before connectGame so it is a class member, not a nested local function.
           if "private fun requestMicrosoftLogin()" not in s:
-              anchor="private fun showMicrosoftCode(code: String, link: String) {"
-              login_request = """              private fun requestMicrosoftLogin() {
-                  if(!serviceReady) {
-                      toast("AI 后台服务仍在启动，请稍后重试")
-                      return
-                  }
-                  if(authLoginRequested) return
-                  authLoginRequested=true
-                  homeAccountText?.text="正在打开 Microsoft 官方账号授权…"
-                  api("POST","/api/auth/login",JSONObject(),240000){result,error->
-                      if(error!=null) {
-                          authLoginRequested=false
-                          homeAccountText?.text="Microsoft 登录失败：" + error
-                          toast("Microsoft 登录失败：" + error)
-                      } else {
-                          authAvailable=true
-                          homeAccountText?.text="Microsoft / Xbox 登录已保存"
-                          toast("Microsoft / Xbox 登录已完成，账号信息已缓存")
+              anchor="private fun connectGame() {"
+              pos=s.find(anchor)
+              if pos<0:
+                  raise SystemExit("MainActivity connectGame method anchor not found for pre-login method")
+              line_start=s.rfind("\n",0,pos)+1
+              request_method = """    private fun requestMicrosoftLogin() {
+                      if(!serviceReady) {
+                          toast("AI 后台服务仍在启动，请稍后重试")
+                          return
+                      }
+                      if(authLoginRequested) return
+                      authLoginRequested=true
+                      homeAccountText?.text="正在打开 Microsoft 官方账号授权…"
+                      api("POST","/api/auth/login",JSONObject(),240000){result,error->
+                          if(error!=null) {
+                              authLoginRequested=false
+                              homeAccountText?.text="Microsoft 登录失败：" + error
+                              toast("Microsoft 登录失败：" + error)
+                          } else {
+                              authAvailable=true
+                              homeAccountText?.text="Microsoft / Xbox 登录已保存"
+                              toast("Microsoft / Xbox 登录已完成，账号信息已缓存")
+                          }
                       }
                   }
+
+              """
+              s=s[:line_start]+request_method+s[line_start:]
+
+          # Gate the connect action on the pre-authenticated Xbox session.
+          connect_start=s.find("private fun connectGame() {")
+          disconnect_start=s.find("private fun disconnectGame()",connect_start if connect_start>=0 else 0)
+          if connect_start<0 or disconnect_start<0:
+              raise SystemExit("MainActivity connect/disconnect boundaries not found")
+          connect_line=s.rfind("\n",0,connect_start)+1
+          connect_method="""    private fun connectGame() {
+                  if(!authAvailable) {
+                      requestMicrosoftLogin()
+                      toast("先完成 Microsoft 官方账号授权，再加入世界")
+                      return
+                  }
+                  saveSettings(true)
               }
 
           """
-              if anchor not in s: raise SystemExit("MainActivity Microsoft code screen insertion point not found")
-              s=s.replace(anchor,login_request+anchor,1)
-
+          s=s[:connect_line]+connect_method+s[disconnect_start-line_start if False else disconnect_start:]
+          # Guard against an accidental duplicate or missing method before compiling Kotlin.
+          if "private fun requestMicrosoftLogin()" not in s:
+              raise SystemExit("Microsoft pre-login method was not inserted")
           # State polling auto-starts Microsoft authorization; all page fields are guarded by initialization checks.
           start=s.find("private fun refreshState() {")
           end=s.find("private fun loadSettings()",start if start>=0 else 0)
