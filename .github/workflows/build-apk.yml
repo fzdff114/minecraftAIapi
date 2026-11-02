@@ -1791,6 +1791,14 @@ jobs:
                   saveSettings(true)
               }
 
+              private fun beginConnection() {
+                  gameStatus.text = "正在使用已保存的 Microsoft / Xbox 身份连接 Bedrock 世界…"
+                  api("POST", "/api/connect", JSONObject(), 240000) { result, error ->
+                      if (error != null) gameStatus.text = "连接未完成：" + error
+                      else gameStatus.text = result?.optString("message", "连接请求已完成") ?: "连接请求已完成"
+                  }
+              }
+
           """
           s=s[:connect_line]+connect_method+s[disconnect_start-line_start if False else disconnect_start:]
           # Guard against an accidental duplicate or missing method before compiling Kotlin.
