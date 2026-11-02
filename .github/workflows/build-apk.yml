@@ -2042,7 +2042,7 @@ jobs:
           s = p.read_text()
 
           if "import android.widget.FrameLayout" not in s:
-              s=s.replace("import android.widget.EditText","import android.widget.EditText\n          import android.widget.FrameLayout",1)
+              s=s.replace("import android.widget.EditText","import android.widget.EditText" + newline + "import android.widget.FrameLayout",1)
           if "import android.view.View\n" not in s:
               s=s.replace("import android.view.Gravity","import android.view.Gravity\n          import android.view.View",1)
 
@@ -2055,20 +2055,21 @@ jobs:
           s=s.replace("import java.io.FileOutputStream\n","")
           s=s.replace("              private lateinit var skinPreview: ImageView\n","")
 
-          fields = """              private lateinit var pageHost: FrameLayout
-              private lateinit var homePage: ScrollView
-              private lateinit var serverPage: ScrollView
-              private lateinit var aiPage: ScrollView
-              private lateinit var behaviorPage: ScrollView
-              private lateinit var logsPage: ScrollView
-
-          """
+          newline = chr(10)
+          fields = newline.join([
+              "    private lateinit var pageHost: FrameLayout",
+              "    private lateinit var homePage: ScrollView",
+              "    private lateinit var serverPage: ScrollView",
+              "    private lateinit var aiPage: ScrollView",
+              "    private lateinit var behaviorPage: ScrollView",
+              "    private lateinit var logsPage: ScrollView"
+          ]) + newline
           if "private lateinit var pageHost: FrameLayout" not in s:
-              field_pos = s.find("private lateinit var chatInput: EditText")
-              if field_pos < 0: raise SystemExit("MainActivity chat input field not found")
-              field_end = s.find("\\n", field_pos)
-              if field_end < 0: raise SystemExit("MainActivity field line ending not found")
-              s = s[:field_end + 1] + fields + s[field_end + 1:]
+              class_pos = s.find("class MainActivity : Activity() {")
+              if class_pos < 0: raise SystemExit("MainActivity class declaration missing")
+              insert_pos = s.find(newline, class_pos)
+              if insert_pos < 0: raise SystemExit("MainActivity class line ending missing")
+              s = s[:insert_pos + 1] + fields + s[insert_pos + 1:]
 
           start=s.find("private fun buildUi()")
           end=s.find("private fun card(",start if start>=0 else 0)
@@ -2255,7 +2256,7 @@ jobs:
               marker = 'accountDetails.text = "下次连接时会重新打开 Microsoft 官方授权页面。"'
               if marker not in clear_block:
                   raise SystemExit("Account switch status line not found")
-              clear_block = clear_block.replace(marker, marker + '\n                                  val restart = Intent(this, AgentService::class.java).setAction(AgentService.ACTION_RESTART)\n                                  ContextCompat.startForegroundService(this, restart)', 1)
+              clear_block = clear_block.replace(marker, marker + chr(10) + '                                  val restart = Intent(this, AgentService::class.java).setAction(AgentService.ACTION_RESTART)' + chr(10) + '                                  ContextCompat.startForegroundService(this, restart)', 1)
               s = s[:clear_start] + clear_block + s[clear_end:]
 
           # Drop the app-side custom PNG picker; invoke Minecraft's own Persona Dressing Room via its official deep link.
