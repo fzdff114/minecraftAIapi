@@ -82,15 +82,15 @@ jobs:
           s = p.read_text()
           if "versionCode 20003" not in s or "versionName '2.0.0-alpha.4'" not in s:
               raise SystemExit("App 版本号不是预期的 alpha.4，停止构建")
-          s = s.replace("versionCode 20003", "versionCode 20011", 1)
-          s = s.replace("versionName '2.0.0-alpha.4'", "versionName '2.0.0-alpha.12'", 1)
+          s = s.replace("versionCode 20003", "versionCode 20012", 1)
+          s = s.replace("versionName '2.0.0-alpha.4'", "versionName '2.0.0-alpha.13'", 1)
           p.write_text(s)
 
           # Use the Microsoft device-code flow provided by bedrock-protocol.
           # OnMsaCode is the actual OAuth callback; open its official verification URI once per code.
           p = Path("agent/public/index.html")
           s = p.read_text()
-          s = s.replace("2.0.0-alpha.3 · 本机控制台", "2.0.0-alpha.11 · 本机控制台")
+          s = s.replace("2.0.0-alpha.3 · 本机控制台", "2.0.0-alpha.13 · 本机控制台")
           old_state = "let settings=null,lastChatCount=0,lastLogs='';"
           new_state = "let settings=null,lastChatCount=0,lastLogs='',lastOpenedMicrosoftCode='';"
           if old_state not in s:
@@ -1942,6 +1942,344 @@ jobs:
           p.write_text(s)
           PY
 
+      - name: Apply Minecraft 1.19 title-screen layout and sign in before server setup
+        working-directory: BlockmateAI-Android
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re, textwrap
+
+          # Copy only the Minecraft 1.19 start-screen logo and panorama derived from the supplied APK.
+          # No 1.19 gameplay, protocol, network, or world files are copied.
+          import zipfile
+          assets_zip = Path("../minecraft-menu-assets.zip")
+          if not assets_zip.is_file():
+              raise SystemExit("Minecraft menu asset archive missing")
+          assets_dir = Path("app/src/main/assets/minecraft")
+          assets_dir.mkdir(parents=True, exist_ok=True)
+          with zipfile.ZipFile(assets_zip) as archive:
+              for name in ("menu_bg_small.webp", "menu_logo_small.webp"):
+                  target = assets_dir / name
+                  target.write_bytes(archive.read(name))
+
+          # Add a Microsoft/Xbox-only pre-login. It uses the exact same Authflow cache directory
+          # as the later Bedrock connection, so the server page is not required to sign in.
+          p = Path("agent/src/bedrock-transport.ts")
+          s = p.read_text()
+          getter = "  getAuthInfo():XboxAccountInfo|null { return this.authInfo ? {...this.authInfo} : null; }"
+          method = r"""
+            async authenticateAccount():Promise<XboxAccountInfo> {
+              const settings=this.getSettings();
+              const authlib=require('prismarine-auth');
+              const XboxClient=require('prismarine-xbox-services').XboxClient;
+              const flow=new authlib.Authflow(settings.server.username,this.authFolder,{
+                flow:'live',
+                authTitle:authlib.Titles.MinecraftAndroid,
+                deviceType:'Android'
+              },(data:any)=>{
+                const d={
+                  userCode:String(data.user_code ?? data.userCode ?? ''),
+                  verificationUri:String(data.verification_uri ?? data.verificationUri ?? 'https://www.microsoft.com/link'),
+                  message:String(data.message ?? '')
+                };
+                this.hooks.deviceCode(d);
+                this.hooks.status('请在打开的 Microsoft 官方页面完成账号登录与设备授权。');
+              });
+
+              this.hooks.status('正在读取已保存的 Microsoft/Xbox 登录状态…');
+              const xsts=await flow.getXboxToken('http://xboxlive.com');
+              const profile=await new XboxClient(flow).getProfile('me');
+              const expires=new Date(xsts.expiresOn);
+              this.actualGamertag=String(profile.gamertag ?? profile.displayName ?? '');
+              this.authInfo={
+                gamertag:this.actualGamertag,
+                uuid:'',
+                xuid:String(profile.xuid ?? xsts.userXUID ?? ''),
+                userHash:String(xsts.userHash ?? ''),
+                titleId:'0000000048183522',
+                platform:'Android',
+                expiresAt:Number.isNaN(expires.getTime()) ? String(xsts.expiresOn ?? '') : expires.toISOString(),
+                bedrockChainReady:false,
+                multiplayerTokenReady:false
+              };
+
+              // prismarine-auth stores refreshable Microsoft/Xbox tokens in this private cache.
+              // Persist only non-secret profile metadata separately; never write raw tokens to the UI or AI API.
+              const fs=require('node:fs');
+              const path=require('node:path');
+              fs.writeFileSync(path.join(this.authFolder,'account-info.json'),JSON.stringify({
+                ...this.authInfo,
+                displayName:String(profile.displayName ?? ''),
+                avatarUrl:String(profile.avatarUrl ?? ''),
+                savedAt:new Date().toISOString()
+              },null,2),{encoding:'utf8',mode:0o600});
+
+              this.hooks.deviceCode(null);
+              this.hooks.status('Microsoft/Xbox 登录成功：' + (this.actualGamertag || '已登录') + '。现在可以选择服务器或好友世界。');
+              this.hooks.log('已提前登录 Minecraft Android Xbox 账号：Gamertag=' + this.actualGamertag + '；XUID=' + this.authInfo.xuid);
+              return {...this.authInfo};
+            }
+          """
+          if "async authenticateAccount():Promise<XboxAccountInfo>" not in s:
+              if getter not in s: raise SystemExit("BedrockTransport getAuthInfo anchor missing")
+              s=s.replace(getter,getter+"\n"+textwrap.dedent(method),1)
+          p.write_text(s)
+
+          # Trigger account authorization as soon as the local API is listening, before any server settings.
+          p = Path("agent/src/main.ts")
+          s = p.read_text()
+          anchor = "await dashboard.listen(settings.dashboard.port);"
+          kickoff = """await dashboard.listen(settings.dashboard.port);
+          setTimeout(() => {
+            void transport.authenticateAccount().catch((error:any) => {
+              status('Microsoft/Xbox 登录失败：' + (error instanceof Error ? error.message : String(error)) + '。可在主界面重新登录。');
+            });
+          }, 250);"""
+          if "transport.authenticateAccount()" not in s:
+              if anchor not in s: raise SystemExit("Dashboard startup anchor missing")
+              s=s.replace(anchor,kickoff,1)
+          p.write_text(s)
+
+          # Rewrite the app's actual home page: Minecraft 1.19 logo + panorama, with real page navigation.
+          p = Path("app/src/main/java/com/blockmate/ai/MainActivity.kt")
+          s = p.read_text()
+
+          if "import android.widget.FrameLayout" not in s:
+              s=s.replace("import android.widget.EditText","import android.widget.EditText\n          import android.widget.FrameLayout",1)
+          if "import android.view.View\n" not in s:
+              s=s.replace("import android.view.Gravity","import android.view.Gravity\n          import android.view.View",1)
+
+          # Delete the previous custom PNG skin importer; the skin button now opens Minecraft's actual Dressing Room.
+          s=s.replace("import android.content.ContentValues\n","")
+          s=s.replace("import android.os.Environment\n","")
+          s=s.replace("import android.provider.MediaStore\n","")
+          s=s.replace("import android.provider.OpenableColumns\n","")
+          s=s.replace("import java.io.File\n","")
+          s=s.replace("import java.io.FileOutputStream\n","")
+          s=s.replace("              private lateinit var skinPreview: ImageView\n","")
+
+          fields = """              private lateinit var pageHost: FrameLayout
+              private lateinit var homePage: ScrollView
+              private lateinit var serverPage: ScrollView
+              private lateinit var aiPage: ScrollView
+              private lateinit var behaviorPage: ScrollView
+              private lateinit var logsPage: ScrollView
+              private var accountAuthenticated = false
+
+          """
+          if "private lateinit var pageHost: FrameLayout" not in s:
+              anchor_field = "              private lateinit var chatInput: EditText\n"
+              if anchor_field not in s: raise SystemExit("MainActivity field insertion anchor missing")
+              s=s.replace(anchor_field,anchor_field+fields,1)
+
+          start=s.find("private fun buildUi()")
+          end=s.find("private fun card(",start if start>=0 else 0)
+          if start<0 or end<0: raise SystemExit("MainActivity buildUi/card boundaries missing")
+          start=s.rfind("\n",0,start)+1
+          end=s.rfind("\n",0,end)+1
+          ui = r'''
+              private fun buildUi() {
+                  window.statusBarColor = Color.rgb(12, 25, 40)
+                  window.navigationBarColor = Color.rgb(8, 17, 29)
+                  pageHost = FrameLayout(this).apply { setBackgroundColor(Color.rgb(9, 17, 29)) }
+                  setContentView(pageHost)
+                  homePage = buildMainMenu()
+                  serverPage = buildServerPage()
+                  aiPage = buildAiPage()
+                  behaviorPage = buildBehaviorPage()
+                  logsPage = buildLogsPage()
+                  showPage(homePage)
+              }
+
+              private fun showPage(page: ScrollView) {
+                  pageHost.removeAllViews()
+                  pageHost.addView(page, FrameLayout.LayoutParams(-1, -1))
+              }
+
+              private fun buildMainMenu(): ScrollView {
+                  val scroll = ScrollView(this).apply {
+                      isFillViewport = true
+                      setBackgroundColor(Color.rgb(9, 17, 29))
+                  }
+                  val frame = FrameLayout(this).apply {
+                      minimumHeight = resources.displayMetrics.heightPixels
+                  }
+                  scroll.addView(frame, ScrollView.LayoutParams(-1, -2))
+
+                  val background = ImageView(this).apply {
+                      scaleType = ImageView.ScaleType.CENTER_CROP
+                      try {
+                          assets.open("minecraft/menu_bg_small.webp").use { input ->
+                              setImageBitmap(BitmapFactory.decodeStream(input))
+                          }
+                      } catch (_: Exception) {}
+                  }
+                  frame.addView(background, FrameLayout.LayoutParams(-1, -1))
+                  frame.addView(View(this).apply {
+                      setBackgroundColor(0x78081320)
+                  }, FrameLayout.LayoutParams(-1, -1))
+
+                  val content = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      setPadding(dp(18), dp(22), dp(18), dp(28))
+                  }
+                  frame.addView(content, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
+
+                  val logo = ImageView(this).apply {
+                      adjustViewBounds = true
+                      scaleType = ImageView.ScaleType.FIT_CENTER
+                      try {
+                          assets.open("minecraft/menu_logo_small.webp").use { input ->
+                              setImageBitmap(BitmapFactory.decodeStream(input))
+                          }
+                      } catch (_: Exception) {}
+                  }
+                  content.addView(logo, LinearLayout.LayoutParams(-1, dp(76)))
+                  addText(content, "方块伙伴 AI 2.0", 23f, true, Color.WHITE)
+                  addText(content, "Minecraft Bedrock · 独立 AI 玩家", 13f, false, 0xFFE2E8F0.toInt())
+
+                  val account = card(content, "Microsoft / Xbox 账号")
+                  accountStatus = addText(account, "正在自动登录 Microsoft 账号…", 17f, true, Color.WHITE)
+                  accountDetails = addText(account, "首次打开会直接弹出 Microsoft 官方授权页面；已有有效登录缓存则自动恢复。无需先配置服务器。", 12f, false, 0xFFD4DFEC.toInt())
+                  serviceStatus = addText(account, "后台服务启动中…", 12f, false, 0xFFB8C9DA.toInt())
+                  val loginRow = row(account)
+                  addButton(loginRow, "重新登录 / 切换账号", false) { clearXboxCache() }
+                  addButton(loginRow, "刷新状态", false) { refreshState() }
+
+                  val menu = card(content, "开始")
+                  addMenuButton(menu, "开始游戏 · 选择服务器", true) { showPage(serverPage) }
+                  addMenuButton(menu, "角色更衣室 · 使用 Minecraft 原生界面", false) { openMinecraftProfile() }
+                  addMenuButton(menu, "AI 玩家与聊天日志", false) { showPage(logsPage) }
+                  addMenuButton(menu, "AI 服务设置", false) { showPage(aiPage) }
+                  addMenuButton(menu, "AI 行为设置", false) { showPage(behaviorPage) }
+
+                  val footer = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      setPadding(0, dp(18), 0, 0)
+                  }
+                  content.addView(footer)
+                  addText(footer, "连接方式：Bedrock 1.26.60 · RakNet / NetherNet", 11f, false, 0xFFD0DBE8.toInt())
+                  addText(footer, "皮肤、披风和角色切换由 Minecraft 原生 Persona Dressing Room 管理。", 11f, false, 0xFFD0DBE8.toInt())
+                  return scroll
+              }
+
+              private fun buildServerPage(): ScrollView {
+                  val (scroll, root) = createSolidPage("游戏连接")
+                  gameStatus = addText(root, "等待 Microsoft 登录", 14f, true, 0xFFBAE6FD.toInt())
+                  modeSpinner = addSpinner(root, arrayOf("服务器 IP / 端口", "Xbox 好友世界", "Realm"))
+                  hostInput = addEdit(root, "服务器地址 / IP", "127.0.0.1")
+                  val rowFields = row(root)
+                  portInput = addEdit(rowFields, "UDP 端口", "19132", false, 1f)
+                  versionInput = addEdit(rowFields, "Bedrock 版本", "1.26.60", false, 1f)
+                  usernameInput = addEdit(root, "AI 玩家昵称", "BlockmateAI")
+                  transportSpinner = addSpinner(root, arrayOf("自动检测（推荐）", "RakNet", "NetherNet"))
+                  addText(root, "好友世界和 Realm 使用刚才提前登录的 Xbox 账号；这里仅配置 AI 玩家如何加入，不会再次要求登录。", 12f, false, 0xFF9CAEC2.toInt())
+                  val actions = row(root)
+                  addButton(actions, "保存连接设置", false) { saveSettings(false) }
+                  addButton(actions, "登录并加入世界", true) { connectGame() }
+                  addButton(root, "断开 AI 玩家", false) { disconnectGame() }
+                  worldsPanel = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+                  root.addView(worldsPanel, LinearLayout.LayoutParams(-1, -2))
+                  return scroll
+              }
+
+              private fun buildAiPage(): ScrollView {
+                  val (scroll, root) = createSolidPage("AI 服务设置")
+                  apiUrlInput = addEdit(root, "AI API 地址（HTTPS）", "https://api.openai.com/v1")
+                  apiKeyInput = addEdit(root, "AI API Key（留空表示保留原密钥）", "", true)
+                  modelInput = addEdit(root, "模型名称", "gpt-4.1-mini")
+                  val actions = row(root)
+                  addButton(actions, "保存设置", true) { saveSettings(false) }
+                  addButton(actions, "测试 API", false) { testAi() }
+                  addText(root, "Microsoft / Xbox 登录与 AI API 完全分离。Xbox 令牌不会发送给 AI 服务。", 12f, false, 0xFF9CAEC2.toInt())
+                  return scroll
+              }
+
+              private fun buildBehaviorPage(): ScrollView {
+                  val (scroll, root) = createSolidPage("AI 行为")
+                  autonomySwitch = addSwitch(root, "自主生存")
+                  attackSwitch = addSwitch(root, "攻击敌对生物")
+                  collectSwitch = addSwitch(root, "收集掉落物")
+                  exploreSwitch = addSwitch(root, "主动探索")
+                  eatSwitch = addSwitch(root, "饥饿时进食")
+                  addButton(root, "保存行为设置", true) { saveSettings(false) }
+                  return scroll
+              }
+
+              private fun buildLogsPage(): ScrollView {
+                  val (scroll, root) = createSolidPage("AI 玩家与聊天日志")
+                  chatInput = addEdit(root, "发送给游戏内 AI 玩家", "")
+                  addButton(root, "发送聊天", true) { sendChat() }
+                  logsView = addText(root, "等待后台日志…", 12f, false, 0xFFCBD5E1.toInt())
+                  addButton(root, "刷新日志", false) { refreshState() }
+                  return scroll
+              }
+
+              private fun createSolidPage(title: String): Pair<ScrollView, LinearLayout> {
+                  val scroll = ScrollView(this).apply {
+                      isFillViewport = true
+                      setBackgroundColor(Color.rgb(10, 20, 34))
+                  }
+                  val root = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      setPadding(dp(16), dp(16), dp(16), dp(32))
+                  }
+                  scroll.addView(root)
+                  val header = row(root)
+                  addButton(header, "返回首页", false) { showPage(homePage) }
+                  addText(root, title, 23f, true, Color.WHITE)
+                  return Pair(scroll, root)
+              }
+
+              private fun addMenuButton(parent: LinearLayout, label: String, primary: Boolean, action: () -> Unit) {
+                  val button = Button(this).apply {
+                      text = label
+                      textSize = 15f
+                      isAllCaps = false
+                      setTextColor(if (primary) 0xFF14202B.toInt() else Color.WHITE)
+                      background = rounded(if (primary) 0xFF70D7B7.toInt() else 0xCC24384E.toInt(), 8, if (primary) 0 else 0xFF8193A8.toInt())
+                      setOnClickListener { action() }
+                  }
+                  val lp = LinearLayout.LayoutParams(-1, dp(54))
+                  lp.topMargin = dp(7)
+                  parent.addView(button, lp)
+              }
+          '''
+          s=s[:start]+textwrap.dedent(ui)+s[end:]
+
+          # A login is mandatory before joining; the auto-login has already started on app launch.
+          if "private var accountAuthenticated = false" not in s:
+              raise SystemExit("MainActivity accountAuthenticated field missing")
+          s=s.replace(
+              '                  val tag = auth.optString("gamertag", value.optString("botName", "Xbox 玩家"))',
+              '                  val tag = auth.optString("gamertag", value.optString("botName", "Xbox 玩家"))\n                  accountAuthenticated = tag.isNotBlank() && auth.optString("xuid").isNotBlank() && auth.optString("xuid") != "0"',
+              1
+          )
+          s=s.replace(
+              '              private fun connectGame() {\n                  saveSettings(true)\n              }',
+              '              private fun connectGame() {\n                  if (!accountAuthenticated) { toast("请先完成 Microsoft / Xbox 登录，登录成功后再加入世界。"); return }\n                  saveSettings(true)\n              }',
+              1
+          )
+
+          # After clearing credentials, restart the embedded agent; its startup now immediately signs in again.
+          old = '                                  accountDetails.text = "下一次连接时会重新打开 Microsoft 官方授权页面。"'
+          new = old + '''
+                                  accountAuthenticated = false
+                                  val restart = Intent(this, AgentService::class.java).setAction(AgentService.ACTION_RESTART)
+                                  ContextCompat.startForegroundService(this, restart)'''
+          if old not in s: raise SystemExit("Account switch restart insertion point missing")
+          s=s.replace(old,new,1)
+
+          # Drop the app-side custom PNG picker; invoke Minecraft's own Persona Dressing Room via its official deep link.
+          skin_start=s.find("private fun chooseSkin()")
+          skin_end=s.find("private fun api(", skin_start if skin_start>=0 else 0)
+          if skin_start>=0 and skin_end>skin_start:
+              skin_start=s.rfind("\n",0,skin_start)+1
+              skin_end=s.rfind("\n",0,skin_end)+1
+              s=s[:skin_start]+s[skin_end:]
+          p.write_text(s)
+          PY
+
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
@@ -2060,7 +2398,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: BlockmateAI-2.0-alpha.12-arm64-debug-apk
+          name: BlockmateAI-2.0-alpha.13-arm64-debug-apk
           path: BlockmateAI-Android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
@@ -2068,8 +2406,8 @@ jobs:
       - name: Publish public GitHub Release download
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: blockmate-ai-2.0-alpha.12-public-20261102
-          name: Blockmate AI 2.0 alpha.12 APK (Public Download)
+          tag_name: blockmate-ai-2.0-alpha.13-public-20261102
+          name: Blockmate AI 2.0 alpha.13 APK (Public Download)
           draft: false
           prerelease: true
           files: BlockmateAI-Android/app/build/outputs/apk/debug/app-debug.apk
