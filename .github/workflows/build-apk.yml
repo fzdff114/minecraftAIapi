@@ -2092,7 +2092,7 @@ jobs:
 
               private fun showPage(page: ScrollView) {
                   pageHost.removeAllViews()
-                  pageHost.addView(page, FrameLayout.LayoutParams(-1, -1))
+                  pageHost.addView(page, android.view.ViewGroup.LayoutParams(-1, -1))
               }
 
               private fun buildMainMenu(): ScrollView {
@@ -2103,7 +2103,7 @@ jobs:
                   val frame = FrameLayout(this).apply {
                       minimumHeight = resources.displayMetrics.heightPixels
                   }
-                  scroll.addView(frame, ScrollView.LayoutParams(-1, -2))
+                  scroll.addView(frame, android.view.ViewGroup.LayoutParams(-1, -2))
 
                   val background = View(this).apply {
                       background = android.graphics.drawable.GradientDrawable(
@@ -2111,16 +2111,16 @@ jobs:
                           intArrayOf(0xFF0D2237.toInt(), 0xFF203B54.toInt(), 0xFF101A2A.toInt(), 0xFF0A1422.toInt())
                       )
                   }
-                  frame.addView(background, FrameLayout.LayoutParams(-1, -1))
+                  frame.addView(background, android.view.ViewGroup.LayoutParams(-1, -1))
                   frame.addView(View(this).apply {
                       setBackgroundColor(0x78081320)
-                  }, FrameLayout.LayoutParams(-1, -1))
+                  }, android.view.ViewGroup.LayoutParams(-1, -1))
 
                   val content = LinearLayout(this).apply {
                       orientation = LinearLayout.VERTICAL
                       setPadding(dp(18), dp(22), dp(18), dp(28))
                   }
-                  frame.addView(content, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
+                  frame.addView(content, android.view.ViewGroup.LayoutParams(-1, -2))
 
                   val logo = ImageView(this).apply {
                       adjustViewBounds = true
