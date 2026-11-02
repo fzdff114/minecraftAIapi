@@ -82,15 +82,15 @@ jobs:
           s = p.read_text()
           if "versionCode 20003" not in s or "versionName '2.0.0-alpha.4'" not in s:
               raise SystemExit("App 版本号不是预期的 alpha.4，停止构建")
-          s = s.replace("versionCode 20003", "versionCode 20012", 1)
-          s = s.replace("versionName '2.0.0-alpha.4'", "versionName '2.0.0-alpha.13'", 1)
+          s = s.replace("versionCode 20003", "versionCode 20013", 1)
+          s = s.replace("versionName '2.0.0-alpha.4'", "versionName '2.0.0-alpha.14'", 1)
           p.write_text(s)
 
           # Use the Microsoft device-code flow provided by bedrock-protocol.
           # OnMsaCode is the actual OAuth callback; open its official verification URI once per code.
           p = Path("agent/public/index.html")
           s = p.read_text()
-          s = s.replace("2.0.0-alpha.3 · 本机控制台", "2.0.0-alpha.13 · 本机控制台")
+          s = s.replace("2.0.0-alpha.3 · 本机控制台", "2.0.0-alpha.14 · 本机控制台")
           old_state = "let settings=null,lastChatCount=0,lastLogs='';"
           new_state = "let settings=null,lastChatCount=0,lastLogs='',lastOpenedMicrosoftCode='';"
           if old_state not in s:
@@ -1958,6 +1958,10 @@ jobs:
           if not logo_source.is_file():
               raise SystemExit("Minecraft Bedrock menu logo asset missing")
           (assets_dir / "menu_logo_small.webp").write_bytes(logo_source.read_bytes())
+          panorama_source = Path("../minecraft_assets/main_menu_panorama.jpg")
+          if not panorama_source.is_file():
+              raise SystemExit("Minecraft Bedrock panorama reference asset missing")
+          (assets_dir / "main_menu_panorama.jpg").write_bytes(panorama_source.read_bytes())
 
           # Add a Microsoft/Xbox-only pre-login. It uses the exact same Authflow cache directory
           # as the later Bedrock connection, so the server page is not required to sign in.
@@ -2105,11 +2109,16 @@ jobs:
                   }
                   scroll.addView(frame, android.view.ViewGroup.LayoutParams(-1, -2))
 
-                  val background = View(this).apply {
-                      background = android.graphics.drawable.GradientDrawable(
-                          android.graphics.drawable.GradientDrawable.Orientation.TL_BR,
-                          intArrayOf(0xFF0D2237.toInt(), 0xFF203B54.toInt(), 0xFF101A2A.toInt(), 0xFF0A1422.toInt())
-                      )
+                  val background = ImageView(this).apply {
+                      scaleType = ImageView.ScaleType.CENTER_CROP
+                      contentDescription = "Minecraft Bedrock 原版主菜单全景背景"
+                      try {
+                          assets.open("minecraft/main_menu_panorama.jpg").use { input ->
+                              setImageBitmap(BitmapFactory.decodeStream(input))
+                          }
+                      } catch (e: Exception) {
+                          setBackgroundColor(0xFF172C3A.toInt())
+                      }
                   }
                   frame.addView(background, android.view.ViewGroup.LayoutParams(-1, -1))
                   frame.addView(View(this).apply {
@@ -2132,8 +2141,10 @@ jobs:
                       } catch (_: Exception) {}
                   }
                   content.addView(logo, LinearLayout.LayoutParams(-1, dp(76)))
-                  addText(content, "方块伙伴 AI 2.0", 23f, true, Color.WHITE)
-                  addText(content, "Minecraft Bedrock · 独立 AI 玩家", 13f, false, 0xFFE2E8F0.toInt())
+                  val product = addText(content, "方块伙伴 AI 2.0", 22f, true, Color.WHITE)
+                  product.gravity = Gravity.CENTER
+                  val edition = addText(content, "Minecraft Bedrock · 独立 AI 玩家", 13f, false, 0xFFE2E8F0.toInt())
+                  edition.gravity = Gravity.CENTER
 
                   val account = card(content, "Microsoft / Xbox 账号")
                   accountStatus = addText(account, "正在自动登录 Microsoft 账号…", 17f, true, Color.WHITE)
@@ -2323,6 +2334,24 @@ jobs:
           test -s app/src/main/assets/agent/node_modules/minecraft-data/minecraft-data/data/pc/common/features.json
           test -s app/src/main/assets/agent/node_modules/minecraft-data/minecraft-data/data/bedrock/common/features.json
           # The native Android app no longer ships or loads the old HTML dashboard.
+          # The native menu now hands character/skin switching to Minecraft's own Dressing Room.
+          # Remove any leftover standalone PNG-picker source and import-only resources.
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          p=Path("app/src/main/java/com/blockmate/ai/MainActivity.kt")
+          src=p.read_text()
+          if "private fun chooseSkin()" in src:
+              a=src.find("private fun chooseSkin()")
+              b=src.find("private fun api(",a)
+              if a>=0 and b>a:
+                  a=src.rfind("\\n",0,a)+1
+                  b=src.rfind("\\n",0,b)+1
+                  src=src[:a]+src[b:]
+          for imp in ["import android.provider.MediaStore\\n","import android.provider.OpenableColumns\\n","import android.os.Environment\\n","import android.content.ContentValues\\n","import java.io.FileOutputStream\\n"]:
+              src=src.replace(imp,"")
+          p.write_text(src)
+          PY
           rm -rf app/src/main/assets/agent/public
           # Strip non-runtime files from the packaged production dependencies.
           find app/src/main/assets/agent/node_modules -type d \( -name .git -o -name .github -o -name test -o -name tests -o -name __tests__ -o -name docs -o -name examples -o -name example -o -name coverage -o -name benchmarks -o -name benchmark \) -prune -exec rm -rf {} +
@@ -2387,7 +2416,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: BlockmateAI-2.0-alpha.13-arm64-debug-apk
+          name: BlockmateAI-2.0-alpha.14-arm64-debug-apk
           path: BlockmateAI-Android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
@@ -2395,8 +2424,8 @@ jobs:
       - name: Publish public GitHub Release download
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: blockmate-ai-2.0-alpha.13-public-20261102
-          name: Blockmate AI 2.0 alpha.13 APK (Public Download)
+          tag_name: blockmate-ai-2.0-alpha.14-public-20261102
+          name: Blockmate AI 2.0 alpha.14 APK (Public Download)
           draft: false
           prerelease: true
           files: BlockmateAI-Android/app/build/outputs/apk/debug/app-debug.apk
