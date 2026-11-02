@@ -1025,18 +1025,21 @@ jobs:
           # Replace the external browser hand-off with an in-app WebView loading Microsoft's real verification page.
           main_path = Path("app/src/main/java/com/blockmate/ai/MainActivity.kt")
           main = main_path.read_text()
-          pattern = r"              private fun showMicrosoftCode\(code: String, link: String\) \{.*?              private fun renderWorlds"
-          replacement = """              private fun showMicrosoftCode(code: String, link: String) {
+          start = main.find("private fun showMicrosoftCode")
+          end = main.find("private fun renderWorlds", start if start >= 0 else 0)
+          if start < 0 or end < 0:
+              raise SystemExit("MainActivity Microsoft sign-in methods not found")
+          start = main.rfind("\\n", 0, start) + 1
+          end = main.rfind("\\n", 0, end) + 1
+          replacement = """    private fun showMicrosoftCode(code: String, link: String) {
                   val intent = Intent(this, MicrosoftLoginActivity::class.java)
                       .putExtra("microsoft_code", code)
                       .putExtra("verification_uri", link)
                   startActivity(intent)
               }
 
-              private fun renderWorlds"""
-          main, count = re.subn(pattern, lambda _: replacement, main, count=1, flags=re.S)
-          if count != 1:
-              raise SystemExit("MainActivity Microsoft sign-in handoff block not found")
+          """
+          main = main[:start] + replacement + main[end:]
           main = main.replace("2.0.0-alpha.9 · 原生 Android 界面，不使用 HTML / WebView",
                               "2.0.0-alpha.10 · 原生 Android 界面，官方 Microsoft 登录内嵌")
           main_path.write_text(main)
