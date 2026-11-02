@@ -1852,22 +1852,6 @@ jobs:
           """
           s=s[:start]+update_method+s[end:]
 
-          # Ensure the game connection never starts its own separate login prompt if pre-login has not finished.
-          old_connect = """    private fun connectGame() {
-        saveSettings(true)
-    }"""
-          new_connect = """    private fun connectGame() {
-        if(!authAvailable) {
-            requestMicrosoftLogin()
-            toast("先完成 Microsoft 官方账号授权，再加入世界")
-            return
-        }
-        saveSettings(true)
-    }"""
-          if old_connect in s:
-              s=s.replace(old_connect,new_connect,1)
-          else:
-              if "private fun connectGame()" not in s: raise SystemExit("MainActivity connectGame method not found")
           s=s.replace("2.0.0-alpha.10 · 原生 Android 界面，官方 Microsoft 登录内嵌",
                       "2.0.0-alpha.11 · Minecraft 风格主菜单，Microsoft 登录启动即弹出")
           p.write_text(s)
