@@ -2251,14 +2251,14 @@ jobs:
           auth_pos = s.find(auth_marker)
           if auth_pos < 0:
               raise SystemExit("MainActivity authInfo state line not found")
-          auth_line_end = s.find("\\n", auth_pos)
-          auth_line_start = s.rfind("\\n", 0, auth_pos) + 1
+          auth_line_end = s.find("\n", auth_pos)
+          auth_line_start = s.rfind("\n", 0, auth_pos) + 1
           indent = s[auth_line_start:auth_pos]
           if "accountAuthenticated = auth != null" not in s:
-              s = s[:auth_line_end + 1] + indent + 'accountAuthenticated = auth != null && auth.optString("xuid").isNotBlank() && auth.optString("xuid") != "0"\\n' + s[auth_line_end + 1:]
+              s = s[:auth_line_end + 1] + indent + 'accountAuthenticated = auth != null && auth.optString("xuid").isNotBlank() && auth.optString("xuid") != "0"\n' + s[auth_line_end + 1:]
 
-          connect_pattern = r"(private fun connectGame\\(\\)\\s*\\{\\s*)"
-          connect_replacement = r"\\1if (!accountAuthenticated) { toast(\\"请先完成 Microsoft / Xbox 登录，登录成功后再加入世界。\\"); return }\\n"
+          connect_pattern = r'(private fun connectGame\(\)\s*\{\s*)'
+          connect_replacement = r'\1if (!accountAuthenticated) { toast("请先完成 Microsoft / Xbox 登录，登录成功后再加入世界。"); return }\n'
           s, connect_count = re.subn(connect_pattern, connect_replacement, s, count=1)
           if connect_count != 1:
               raise SystemExit("MainActivity connectGame function not found")
