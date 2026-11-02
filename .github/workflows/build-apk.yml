@@ -2681,18 +2681,11 @@ jobs:
                   s = s.replace("import android.widget.Button", imp + "import android.widget.Button", 1)
 
           if "private const val REQUEST_SKIN = 842" not in s:
-              anchor = 'private const val MINECRAFT_PACKAGE = "com.mojang.minecraftpe"'
-              if anchor in s:
-                  s = s.replace(anchor, "private const val REQUEST_SKIN = 842", 1)
-              else:
-                  anchor = "companion object {"
-                  pos = s.find(anchor)
-                  if pos < 0: raise SystemExit("MainActivity companion object missing")
-                  close = s.find("}", pos)
-                  if close < 0: raise SystemExit("MainActivity companion object end missing")
-                  s = s[:close] + "private const val REQUEST_SKIN = 842\n                  " + s[close:]
+              companion = s.find("companion object {")
+              if companion < 0: raise SystemExit("MainActivity companion object missing")
+              line_end = s.find("\\n", companion) + 1
+              s = s[:line_end] + "                  private const val REQUEST_SKIN = 842\\n" + s[line_end:]
 
-          fields_anchor = "private lateinit var logsPage: ScrollView"
           fields_extra = [
               "private lateinit var skinPage: ScrollView",
               "private lateinit var skinPreview: ImageView",
@@ -2702,8 +2695,11 @@ jobs:
           ]
           missing_fields = [x for x in fields_extra if x not in s]
           if missing_fields:
-              if fields_anchor not in s: raise SystemExit("MainActivity page field anchor missing")
-              s = s.replace(fields_anchor, fields_anchor + "\\n" + "\\n".join(missing_fields), 1)
+              class_pos = s.find("class MainActivity : Activity() {")
+              if class_pos < 0: raise SystemExit("MainActivity class declaration missing")
+              line_end = s.find("\\n", class_pos) + 1
+              declarations = "\\n".join("    " + x for x in missing_fields) + "\\n"
+              s = s[:line_end] + declarations + s[line_end:]
 
           s = s.replace(
               "logsPage = buildLogsPage()",
