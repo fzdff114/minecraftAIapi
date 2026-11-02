@@ -86,15 +86,15 @@ jobs:
           s = p.read_text()
           if "versionCode 20003" not in s or "versionName '2.0.0-alpha.4'" not in s:
               raise SystemExit("App 版本号不是预期的 alpha.4，停止构建")
-          s = s.replace("versionCode 20003", "versionCode 20018", 1)
-          s = s.replace("versionName '2.0.0-alpha.4'", "versionName '2.0.0-alpha.19'", 1)
+          s = s.replace("versionCode 20003", "versionCode 20019", 1)
+          s = s.replace("versionName '2.0.0-alpha.4'", "versionName '2.0.0-alpha.20'", 1)
           p.write_text(s)
 
           # Use the Microsoft device-code flow provided by bedrock-protocol.
           # OnMsaCode is the actual OAuth callback; open its official verification URI once per code.
           p = Path("agent/public/index.html")
           s = p.read_text()
-          s = s.replace("2.0.0-alpha.3 · 本机控制台", "2.0.0-alpha.19 · 本机控制台")
+          s = s.replace("2.0.0-alpha.3 · 本机控制台", "2.0.0-alpha.20 · 本机控制台")
           old_state = "let settings=null,lastChatCount=0,lastLogs='';"
           new_state = "let settings=null,lastChatCount=0,lastLogs='',lastOpenedMicrosoftCode='';"
           if old_state not in s:
@@ -2759,6 +2759,21 @@ jobs:
 
           p.write_text(s)
 
+          # Declare the exact Minecraft APK package(s) uploaded by the user so Android 11+
+          # can resolve the scheme-based native Dressing Room intent reliably.
+          manifest = Path("app/src/main/AndroidManifest.xml")
+          m = manifest.read_text()
+          if 'android:name="com.nzl.hell"' not in m:
+              query_block = """  <queries>
+              <package android:name="com.nzl.hell" />
+              <package android:name="com.mojang.minecraftpe" />
+          </queries>
+          """
+              m = re.sub(r"(<manifest\\b[^>]*>)", lambda match: match.group(1) + "\\n" + query_block, m, count=1)
+              if 'android:name="com.nzl.hell"' not in m:
+                  raise SystemExit("无法为 Minecraft 客户端添加 Android package visibility 查询")
+              manifest.write_text(m)
+
           # Pin the existing Bedrock bot runtime to the tested protocol dataset,
           # without changing the original Minecraft game package or gameplay assets.
           p = Path("app/src/main/java/com/blockmate/ai/MainActivity.kt")
@@ -2955,7 +2970,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: BlockmateAI-2.0-alpha.19-arm64-debug-apk
+          name: BlockmateAI-2.0-alpha.20-arm64-debug-apk
           path: BlockmateAI-Android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
