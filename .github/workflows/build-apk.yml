@@ -2693,16 +2693,17 @@ jobs:
                   s = s[:close] + "private const val REQUEST_SKIN = 842\n                  " + s[close:]
 
           fields_anchor = "private lateinit var logsPage: ScrollView"
-          fields_extra = """
-              private lateinit var skinPage: ScrollView
-              private lateinit var skinPreview: ImageView
-              private lateinit var skinStatus: TextView
-              private lateinit var skinList: LinearLayout
-              private var selectedSkinFile: File? = null
-          """
-          if "private lateinit var skinPage: ScrollView" not in s:
+          fields_extra = [
+              "private lateinit var skinPage: ScrollView",
+              "private lateinit var skinPreview: ImageView",
+              "private lateinit var skinStatus: TextView",
+              "private lateinit var skinList: LinearLayout",
+              "private var selectedSkinFile: File? = null"
+          ]
+          missing_fields = [x for x in fields_extra if x not in s]
+          if missing_fields:
               if fields_anchor not in s: raise SystemExit("MainActivity page field anchor missing")
-              s = s.replace(fields_anchor, fields_anchor + "\n" + fields_extra, 1)
+              s = s.replace(fields_anchor, fields_anchor + "\\n" + "\\n".join(missing_fields), 1)
 
           s = s.replace(
               "logsPage = buildLogsPage()",
@@ -2770,7 +2771,7 @@ jobs:
                   } else {
                       for (file in files) {
                           val label = if (file == selectedSkinFile) "✓  " + file.name else file.name
-                          addButton(skinList, label, file == selectedSkinFile) {
+                          addButton(row(skinList), label, file == selectedSkinFile) {
                               selectedSkinFile = file
                               showSkinPreview(file)
                               refreshSkinLibrary()
