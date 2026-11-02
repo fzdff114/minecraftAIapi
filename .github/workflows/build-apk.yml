@@ -843,7 +843,7 @@ jobs:
               @Deprecated("Use Activity Result API after project migration")
               override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
                   super.onActivityResult(requestCode, resultCode, data)
-                  if (requestCode != REQUEST_SKIN || resultCode != RESULT_OK) return
+                  if (requestCode != 842 || resultCode != RESULT_OK) return
                   val uri = data?.data ?: return
                   io.execute {
                       try {
@@ -2680,26 +2680,18 @@ jobs:
               if imp.strip() not in s:
                   s = s.replace("import android.widget.Button", imp + "import android.widget.Button", 1)
 
-          if "private const val REQUEST_SKIN = 842" not in s:
-              companion = s.find("companion object {")
-              if companion < 0: raise SystemExit("MainActivity companion object missing")
-              line_end = s.find("\\n", companion) + 1
-              s = s[:line_end] + "                  private const val REQUEST_SKIN = 842\\n" + s[line_end:]
-
+          # Add the AI skin fields next to the known activity fields; avoid inserting inside a nested helper.
+          fields_anchor = "private lateinit var serviceStatus: TextView"
           fields_extra = [
               "private lateinit var skinPage: ScrollView",
-              "private lateinit var skinPreview: ImageView",
               "private lateinit var skinStatus: TextView",
               "private lateinit var skinList: LinearLayout",
               "private var selectedSkinFile: File? = null"
           ]
           missing_fields = [x for x in fields_extra if x not in s]
           if missing_fields:
-              class_pos = s.find("class MainActivity : Activity() {")
-              if class_pos < 0: raise SystemExit("MainActivity class declaration missing")
-              line_end = s.find("\\n", class_pos) + 1
-              declarations = "\\n".join("    " + x for x in missing_fields) + "\\n"
-              s = s[:line_end] + declarations + s[line_end:]
+              if fields_anchor not in s: raise SystemExit("MainActivity serviceStatus field anchor missing")
+              s = s.replace(fields_anchor, fields_anchor + chr(10) + chr(10).join(missing_fields), 1)
 
           s = s.replace(
               "logsPage = buildLogsPage()",
@@ -2790,7 +2782,7 @@ jobs:
                       addCategory(Intent.CATEGORY_OPENABLE)
                       type = "image/png"
                   }
-                  startActivityForResult(pick, REQUEST_SKIN)
+                  startActivityForResult(pick, 842)
               }
 
               @Deprecated("Use Activity Result API after project migration")
@@ -2906,6 +2898,9 @@ jobs:
           s = s.replace('server.put("version", versionInput.text.toString().trim().ifBlank { "1.26.60" })',
                         'server.put("version", "1.26.60")')
 
+          for n,line in enumerate(s.splitlines(),1):
+              if 960 <= n <= 976:
+                  print(f"MainActivity.kt:{n}: {line}")
           p.write_text(s)
 
           # Keep the Bedrock client skin cache in app-private storage and inject it into the login packet.
