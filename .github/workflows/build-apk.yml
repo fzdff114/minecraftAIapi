@@ -1949,18 +1949,14 @@ jobs:
           from pathlib import Path
           import re, textwrap
 
-          # Copy only the Minecraft 1.19 start-screen logo and panorama derived from the supplied APK.
-          # No 1.19 gameplay, protocol, network, or world files are copied.
-          import zipfile
-          assets_zip = Path("../minecraft-menu-assets.zip")
-          if not assets_zip.is_file():
-              raise SystemExit("Minecraft menu asset archive missing")
+          # Copy only the original Minecraft Bedrock title logo from the supplied 1.19 APK.
+          # No 1.19 gameplay, protocol, multiplayer, network, or world code/assets are copied.
           assets_dir = Path("app/src/main/assets/minecraft")
           assets_dir.mkdir(parents=True, exist_ok=True)
-          with zipfile.ZipFile(assets_zip) as archive:
-              for name in ("menu_bg_small.webp", "menu_logo_small.webp"):
-                  target = assets_dir / name
-                  target.write_bytes(archive.read(name))
+          logo_source = Path("../menu_logo_small.webp")
+          if not logo_source.is_file():
+              raise SystemExit("Minecraft Bedrock menu logo asset missing")
+          (assets_dir / "menu_logo_small.webp").write_bytes(logo_source.read_bytes())
 
           # Add a Microsoft/Xbox-only pre-login. It uses the exact same Authflow cache directory
           # as the later Bedrock connection, so the server page is not required to sign in.
@@ -2106,13 +2102,11 @@ jobs:
                   }
                   scroll.addView(frame, ScrollView.LayoutParams(-1, -2))
 
-                  val background = ImageView(this).apply {
-                      scaleType = ImageView.ScaleType.CENTER_CROP
-                      try {
-                          assets.open("minecraft/menu_bg_small.webp").use { input ->
-                              setImageBitmap(BitmapFactory.decodeStream(input))
-                          }
-                      } catch (_: Exception) {}
+                  val background = View(this).apply {
+                      background = android.graphics.drawable.GradientDrawable(
+                          android.graphics.drawable.GradientDrawable.Orientation.TL_BR,
+                          intArrayOf(0xFF0D2237.toInt(), 0xFF203B54.toInt(), 0xFF101A2A.toInt(), 0xFF0A1422.toInt())
+                      )
                   }
                   frame.addView(background, FrameLayout.LayoutParams(-1, -1))
                   frame.addView(View(this).apply {
