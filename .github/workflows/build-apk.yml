@@ -2645,7 +2645,7 @@ jobs:
 
           # Reflect the signed-in state on both the start page and the AI home page.
           if 'loginActionLabel.text = "进入 AI 控制台"' not in s:
-              marker = 'accountDetails.text = lines.joinToString("\\n")'
+              marker = 'homeAccountText?.text="已登录 Microsoft / Xbox： " + tag'
               if marker not in s:
                   raise SystemExit("MainActivity account metadata refresh marker missing")
               s=s.replace(marker, marker + """
@@ -2653,10 +2653,10 @@ jobs:
                       if (this::loginActionLabel.isInitialized) loginActionLabel.text = "进入 AI 控制台"
                   """,1)
 
-          marker2 = 'accountDetails.text = "请在 Microsoft 页面输入登录代码并完成 Xbox 登录。"'
+          marker2 = 'if(this::accountStatus.isInitialized) accountStatus.text="等待 Microsoft 登录"'
           if marker2 in s:
               s=s.replace(marker2, marker2 + """
-                      if (this::loginPrompt.isInitialized) loginPrompt.text = "正在连接 Microsoft 官方账号…"
+                      if (this::loginPrompt.isInitialized && authLoginRequested) loginPrompt.text = "正在连接 Microsoft 官方账号…"
                   """,1)
 
           p.write_text(s)
