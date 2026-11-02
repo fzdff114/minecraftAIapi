@@ -82,8 +82,8 @@ jobs:
           s = p.read_text()
           if "versionCode 20003" not in s or "versionName '2.0.0-alpha.4'" not in s:
               raise SystemExit("App 版本号不是预期的 alpha.4，停止构建")
-          s = s.replace("versionCode 20003", "versionCode 20010", 1)
-          s = s.replace("versionName '2.0.0-alpha.4'", "versionName '2.0.0-alpha.11'", 1)
+          s = s.replace("versionCode 20003", "versionCode 20011", 1)
+          s = s.replace("versionName '2.0.0-alpha.4'", "versionName '2.0.0-alpha.12'", 1)
           p.write_text(s)
 
           # Use the Microsoft device-code flow provided by bedrock-protocol.
@@ -1648,9 +1648,10 @@ jobs:
                   pageRoot.removeAllViews()
                   addPageHeader(pageRoot,"设置","只在进入设置页时显示配置；启动应用不会再停留在配置表单。")
                   val aiCard=card(pageRoot,"AI 服务")
-                  apiUrlInput=addEdit(aiCard,"AI API 地址（HTTPS）","https://api.openai.com/v1")
-                  apiKeyInput=addEdit(aiCard,"AI API Key（留空表示保留原密钥）","",true)
-                  modelInput=addEdit(aiCard,"模型名称","gpt-4.1-mini")
+                  addText(aiCard,"支持直接粘贴 API 地址、API Key 和模型名称。点右侧“粘贴”即可读取剪贴板。",12f,false,0xFF9CAEC2.toInt())
+                  apiUrlInput=addEditWithPaste(aiCard,"AI API 地址（HTTPS）","https://api.openai.com/v1")
+                  apiKeyInput=addEditWithPaste(aiCard,"AI API Key（留空表示保留原密钥）","",true)
+                  modelInput=addEditWithPaste(aiCard,"模型名称","gpt-4.1-mini")
                   val aiRow=row(aiCard)
                   addButton(aiRow,"保存 AI 设置",true){saveSettings(false)}
                   addButton(aiRow,"测试 API",false){testAi()}
@@ -1709,6 +1710,56 @@ jobs:
 
           """
           s=s[:start]+load_method+s[end:]
+
+          # Add clipboard paste buttons beside long API fields so users never need to type keys character by character.
+          paste_anchor = "private fun addSpinner(parent: LinearLayout, items: Array<String>): Spinner {"
+          if "private fun addEditWithPaste(" not in s:
+              paste_helper = """    private fun addEditWithPaste(parent: LinearLayout, hint: String, value: String, password: Boolean = false): EditText {
+                      val line = LinearLayout(this).apply {
+                          orientation = LinearLayout.HORIZONTAL
+                          gravity = Gravity.CENTER_VERTICAL
+                      }
+                      val lineLp = LinearLayout.LayoutParams(-1, -2)
+                      lineLp.topMargin = dp(4)
+                      parent.addView(line, lineLp)
+                      val field = addEdit(line, hint, value, password, 1f)
+                      val paste = Button(this).apply {
+                          text = "粘贴"
+                          textSize = 13f
+                          isAllCaps = false
+                          setTextColor(0xFFE2E8F0.toInt())
+                          background = rounded(0xFF293C54.toInt(), 10)
+                          setOnClickListener {
+                              try {
+                                  val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                                  val clip = clipboard.primaryClip
+                                  val pasted = if (clip != null && clip.itemCount > 0) {
+                                      clip.getItemAt(0).coerceToText(this@MainActivity)?.toString().orEmpty()
+                                  } else ""
+                                  if (pasted.isBlank()) {
+                                      toast("剪贴板为空，请先复制内容")
+                                  } else {
+                                      field.setText(pasted.trim())
+                                      field.setSelection(field.text.length)
+                                      toast("已粘贴到输入框")
+                                  }
+                              } catch (e: Exception) {
+                                  toast("读取剪贴板失败：" + (e.message ?: "未知错误"))
+                              }
+                          }
+                      }
+                      val buttonLp = LinearLayout.LayoutParams(dp(76), dp(52))
+                      buttonLp.topMargin = dp(5)
+                      buttonLp.bottomMargin = dp(6)
+                      buttonLp.marginStart = dp(4)
+                      line.addView(paste, buttonLp)
+                      return field
+                  }
+
+              """
+              if paste_anchor not in s:
+                  raise SystemExit("addSpinner helper insertion point not found for paste buttons")
+              s=s.replace(paste_anchor,paste_helper+paste_anchor,1)
 
           # Settings payload only writes controls that currently exist on the active page.
           start=s.find("private fun settingsPayload(): JSONObject {")
@@ -1887,7 +1938,7 @@ jobs:
           s=s[:start]+update_method+s[end:]
 
           s=s.replace("2.0.0-alpha.10 · 原生 Android 界面，官方 Microsoft 登录内嵌",
-                      "2.0.0-alpha.11 · Minecraft 风格主菜单，Microsoft 登录启动即弹出")
+                      "2.0.0-alpha.12 · Minecraft 主菜单，API 字段支持剪贴板粘贴")
           p.write_text(s)
           PY
 
@@ -2009,7 +2060,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: BlockmateAI-2.0-alpha.11-arm64-debug-apk
+          name: BlockmateAI-2.0-alpha.12-arm64-debug-apk
           path: BlockmateAI-Android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
@@ -2017,8 +2068,8 @@ jobs:
       - name: Publish public GitHub Release download
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: blockmate-ai-2.0-alpha.11-public-20261102
-          name: Blockmate AI 2.0 alpha.11 APK (Public Download)
+          tag_name: blockmate-ai-2.0-alpha.12-public-20261102
+          name: Blockmate AI 2.0 alpha.12 APK (Public Download)
           draft: false
           prerelease: true
           files: BlockmateAI-Android/app/build/outputs/apk/debug/app-debug.apk
