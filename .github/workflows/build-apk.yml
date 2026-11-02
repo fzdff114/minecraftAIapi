@@ -1463,8 +1463,11 @@ jobs:
           # Reuse the already-authenticated Microsoft flow when the user later joins a Bedrock server.
           old_auth_start="const authlib=require('prismarine-auth');"
           old_auth_end="options.authflow=authflow;"
-          auth_start=s.find(old_auth_start)
-          auth_end=s.find(old_auth_end,auth_start if auth_start>=0 else 0)
+          connect_start=s.find("  async connect():Promise<void> {")
+          if connect_start<0:
+              raise SystemExit("BedrockTransport connect method not found")
+          auth_start=s.find(old_auth_start,connect_start)
+          auth_end=s.find(old_auth_end,auth_start if auth_start>=0 else connect_start)
           replacement = """const authlib=require('prismarine-auth');
               const authflow=this.authflow ?? new authlib.Authflow(settings.server.username,this.authFolder,{
                 flow:'live',
@@ -1473,10 +1476,10 @@ jobs:
               },options.onMsaCode);
               this.authflow=authflow;
               options.authflow=authflow;"""
-          if auth_start>=0 and auth_end>=auth_start:
+          if auth_start>=connect_start and auth_end>=auth_start:
               s=s[:auth_start]+replacement+s[auth_end+len(old_auth_end):]
-          elif "options.authflow=this.authflow" not in s:
-              raise SystemExit("Bedrock connection Authflow reuse point not found")
+          elif "this.authflow=authflow;" not in s[connect_start:]:
+              raise SystemExit("Bedrock connect Authflow block not found after connect method")
           p.write_text(s)
 
           # 2. Expose a login-only API; this route does not attempt a server connection.
