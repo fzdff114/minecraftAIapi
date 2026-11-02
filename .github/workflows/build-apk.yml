@@ -1321,10 +1321,19 @@ jobs:
                   "import java.util.concurrent.TimeUnit\nimport java.net.HttpURLConnection\nimport java.net.URL",
                   1
               )
-          old_start = r"(?m)^(\\s*)val child = builder\\.start\\(\\)\\r?\\n\\s*process = child\\r?\\n\\s*isBackendAlive = true"
-          new_start = r"\\1val child = builder.start()\\n\\1process = child\\n\\1check(awaitDashboardReady(child, 75000L)) {\\n\\1    \"内置 AI 服务 75 秒内未打开本机控制接口。请查看运行日志，检查 Node 启动错误。\"\\n\\1}\\n\\1isBackendAlive = true"
+          old_start = r"(?m)^([ \t]*)val child = builder\.start\(\)\r?\n[ \t]*process = child\r?\n[ \t]*isBackendAlive = true"
           if "awaitDashboardReady(child, 75000L)" not in agent_service:
-              agent_service, count = re.subn(old_start, new_start, agent_service, count=1)
+              def add_readiness_check(match):
+                  indent = match.group(1)
+                  return "\n".join([
+                      indent + "val child = builder.start()",
+                      indent + "process = child",
+                      indent + "check(awaitDashboardReady(child, 75000L)) {",
+                      indent + '    "内置 AI 服务 75 秒内未打开本机控制接口。请查看运行日志，检查 Node 启动错误。"',
+                      indent + "}",
+                      indent + "isBackendAlive = true"
+                  ])
+              agent_service, count = re.subn(old_start, add_readiness_check, agent_service, count=1)
               if count != 1:
                   raise SystemExit("AgentService Node launch block not found")
 
