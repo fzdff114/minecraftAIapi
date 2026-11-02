@@ -2264,7 +2264,7 @@ jobs:
               brace = connect_block.find("{")
               if brace < 0:
                   raise SystemExit("MainActivity connectGame body not found")
-              connect_block = connect_block[:brace + 1] + '\\n        if (!accountAuthenticated) { toast("请先完成 Microsoft / Xbox 登录，登录成功后再加入世界。"); return }' + connect_block[brace + 1:]
+              connect_block = connect_block[:brace + 1] + '\n        if (!accountAuthenticated) { toast("请先完成 Microsoft / Xbox 登录，登录成功后再加入世界。"); return }' + connect_block[brace + 1:]
               s = s[:connect_start] + connect_block + s[connect_end:]
 
           # After clearing credentials, restart the embedded agent; its startup now immediately signs in again.
@@ -2277,7 +2277,7 @@ jobs:
               marker = 'accountDetails.text = "下次连接时会重新打开 Microsoft 官方授权页面。"'
               if marker not in clear_block:
                   raise SystemExit("Account switch status line not found")
-              clear_block = clear_block.replace(marker, marker + '\\n                                  accountAuthenticated = false\\n                                  val restart = Intent(this, AgentService::class.java).setAction(AgentService.ACTION_RESTART)\\n                                  ContextCompat.startForegroundService(this, restart)', 1)
+              clear_block = clear_block.replace(marker, marker + '\n                                  accountAuthenticated = false\n                                  val restart = Intent(this, AgentService::class.java).setAction(AgentService.ACTION_RESTART)\n                                  ContextCompat.startForegroundService(this, restart)', 1)
               s = s[:clear_start] + clear_block + s[clear_end:]
 
           # Drop the app-side custom PNG picker; invoke Minecraft's own Persona Dressing Room via its official deep link.
