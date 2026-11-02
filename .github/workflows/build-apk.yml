@@ -82,15 +82,15 @@ jobs:
           s = p.read_text()
           if "versionCode 20003" not in s or "versionName '2.0.0-alpha.4'" not in s:
               raise SystemExit("App 版本号不是预期的 alpha.4，停止构建")
-          s = s.replace("versionCode 20003", "versionCode 20014", 1)
-          s = s.replace("versionName '2.0.0-alpha.4'", "versionName '2.0.0-alpha.15'", 1)
+          s = s.replace("versionCode 20003", "versionCode 20015", 1)
+          s = s.replace("versionName '2.0.0-alpha.4'", "versionName '2.0.0-alpha.16'", 1)
           p.write_text(s)
 
           # Use the Microsoft device-code flow provided by bedrock-protocol.
           # OnMsaCode is the actual OAuth callback; open its official verification URI once per code.
           p = Path("agent/public/index.html")
           s = p.read_text()
-          s = s.replace("2.0.0-alpha.3 · 本机控制台", "2.0.0-alpha.15 · 本机控制台")
+          s = s.replace("2.0.0-alpha.3 · 本机控制台", "2.0.0-alpha.16 · 本机控制台")
           old_state = "let settings=null,lastChatCount=0,lastLogs='';"
           new_state = "let settings=null,lastChatCount=0,lastLogs='',lastOpenedMicrosoftCode='';"
           if old_state not in s:
@@ -2362,7 +2362,7 @@ jobs:
           s=s[:start]+method+s[end:]
 
           # The game screen is opened in Minecraft itself; remove the unused custom skin-import request constant.
-          s=re.sub(r"(?m)^\\s*private const val REQUEST_SKIN = 841\\s*\\n","",s)
+          s=re.sub(r"(?m)^\s*private const val REQUEST_SKIN\s*=\s*841\s*$", "", s)
           p.write_text(s)
           PY
 
@@ -2502,7 +2502,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: BlockmateAI-2.0-alpha.15-arm64-debug-apk
+          name: BlockmateAI-2.0-alpha.16-arm64-debug-apk
           path: BlockmateAI-Android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
@@ -2510,8 +2510,8 @@ jobs:
       - name: Publish public GitHub Release download
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: blockmate-ai-2.0-alpha.15-public-20261102
-          name: Blockmate AI 2.0 alpha.15 APK (Public Download)
+          tag_name: blockmate-ai-2.0-alpha.16-public-20261102
+          name: Blockmate AI 2.0 alpha.16 APK (Public Download)
           draft: false
           prerelease: true
           files: BlockmateAI-Android/app/build/outputs/apk/debug/app-debug.apk
