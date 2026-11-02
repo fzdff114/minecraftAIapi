@@ -2877,6 +2877,7 @@ jobs:
               }
 
           '''
+          skin_page = skin_page.replace("REQUEST_SKIN", "842")
           if "private fun buildSkinPage(): ScrollView" not in s:
               anchor = "private fun buildServerPage()"
               pos = s.find(anchor)
