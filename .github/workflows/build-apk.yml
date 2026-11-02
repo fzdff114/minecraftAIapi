@@ -22,15 +22,6 @@ jobs:
           test -f BlockmateAI-Android/settings.gradle
           test -f BlockmateAI-Android/app/build.gradle
 
-      - name: Diagnose Android embedded backend and API port
-        working-directory: BlockmateAI-Android
-        run: |
-          echo '--- AgentService ---'
-          sed -n '1,280p' app/src/main/java/com/blockmate/ai/AgentService.kt
-          echo '--- MainActivity launch ---'
-          sed -n '1,260p' app/src/main/java/com/blockmate/ai/MainActivity.kt
-          echo '--- Dashboard default port ---'
-          grep -RInE 'dashboard.*port|listen\(|8765|8787|8080|127\.0\.0\.1' agent/src agent/public app/src/main/java || true
       - name: Fix agent data extraction, launch Microsoft OAuth page, and auto-start backend
         working-directory: BlockmateAI-Android
         run: |
@@ -1528,7 +1519,7 @@ jobs:
           start=s.find("private fun buildUi() {")
           end=s.find("private fun card(",start if start>=0 else 0)
           if start<0 or end<0: raise SystemExit("MainActivity buildUi/card boundaries not found")
-          new_ui = """private fun buildUi() {
+          new_ui = """              private fun buildUi() {
                   val scroll=ScrollView(this).apply {
                       setBackgroundColor(Color.rgb(12,20,29))
                       isFillViewport=true
@@ -1546,7 +1537,7 @@ jobs:
                   showHomePage()
               }
 
-private fun addMenuButton(parent: LinearLayout, label: String, detail: String, action: () -> Unit) {
+              private fun addMenuButton(parent: LinearLayout, label: String, detail: String, action: () -> Unit) {
                   val button=LinearLayout(this).apply {
                       orientation=LinearLayout.VERTICAL
                       gravity=Gravity.CENTER_VERTICAL
@@ -1579,14 +1570,14 @@ private fun addMenuButton(parent: LinearLayout, label: String, detail: String, a
                   parent.addView(button,lp)
               }
 
-private fun addPageHeader(parent: LinearLayout, title: String, subtitle: String) {
+              private fun addPageHeader(parent: LinearLayout, title: String, subtitle: String) {
                   val header=card(parent,title)
                   addText(header,subtitle,12f,false,0xFFB4C2CC.toInt())
                   val back=row(header)
                   addButton(back,"返回主菜单",false){showHomePage()}
               }
 
-private fun showHomePage() {
+              private fun showHomePage() {
                   pageRoot.removeAllViews()
                   pageRoot.background=GradientDrawable(
                       GradientDrawable.Orientation.TL_BR,
@@ -1623,7 +1614,7 @@ private fun showHomePage() {
                   footer.gravity=Gravity.CENTER
               }
 
-private fun showConnectPage() {
+              private fun showConnectPage() {
                   pageRoot.removeAllViews()
                   addPageHeader(pageRoot,"游戏","选择 AI 玩家要加入的 Bedrock 世界。此处保留当前新版独立联机实现。")
                   gameStatus=addText(pageRoot,"等待连接",14f,true,0xFFCBD5E1.toInt())
@@ -1650,7 +1641,7 @@ private fun showConnectPage() {
                   }
               }
 
-private fun showSettingsPage() {
+              private fun showSettingsPage() {
                   pageRoot.removeAllViews()
                   addPageHeader(pageRoot,"设置","只在进入设置页时显示配置；启动应用不会再停留在配置表单。")
                   val aiCard=card(pageRoot,"AI 服务")
@@ -1683,7 +1674,7 @@ private fun showSettingsPage() {
           start=s.find("private fun loadSettings() {")
           end=s.find("private fun buildSettingsPayload()",start if start>=0 else 0)
           if start<0 or end<0: raise SystemExit("MainActivity loadSettings/settingsPayload boundaries not found")
-          load_method = """private fun loadSettings() {
+          load_method = """              private fun loadSettings() {
                   api("GET","/api/settings",null,8000,true){result,_->
                       if(result!=null){
                           settings=result
@@ -1693,7 +1684,7 @@ private fun showSettingsPage() {
                   }
               }
 
-private fun populateSettings(value: JSONObject) {
+              private fun populateSettings(value: JSONObject) {
                   val server=value.optJSONObject("server") ?: JSONObject()
                   if(this::hostInput.isInitialized) hostInput.setText(server.optString("host","127.0.0.1"))
                   if(this::portInput.isInitialized) portInput.setText(server.optString("port","19132"))
@@ -1720,7 +1711,7 @@ private fun populateSettings(value: JSONObject) {
           start=s.find("private fun buildSettingsPayload(): JSONObject {")
           end=s.find("private fun saveSettings(",start if start>=0 else 0)
           if start<0 or end<0: raise SystemExit("MainActivity settings payload boundaries not found")
-          payload_method = """private fun buildSettingsPayload(): JSONObject {
+          payload_method = """              private fun buildSettingsPayload(): JSONObject {
                   val next=JSONObject(settings.toString())
                   val server=next.optJSONObject("server") ?: JSONObject()
                   if(this::modeSpinner.isInitialized) server.put("mode",when(modeSpinner.selectedItemPosition){1->"friendWorld";2->"realm";else->"address"})
@@ -1754,7 +1745,7 @@ private fun populateSettings(value: JSONObject) {
           # Start account authentication as soon as the local API is ready; don't wait for server settings.
           if "private fun requestMicrosoftLogin()" not in s:
               anchor="private fun showMicrosoftCode(code: String, link: String) {"
-              login_request = """private fun requestMicrosoftLogin() {
+              login_request = """              private fun requestMicrosoftLogin() {
                   if(!serviceReady) {
                       toast("AI 后台服务仍在启动，请稍后重试")
                       return
@@ -1783,7 +1774,7 @@ private fun populateSettings(value: JSONObject) {
           start=s.find("private fun refreshState() {")
           end=s.find("private fun loadSettings()",start if start>=0 else 0)
           if start<0 or end<0: raise SystemExit("MainActivity refreshState/loadSettings boundaries not found")
-          refresh_method = """private fun refreshState() {
+          refresh_method = """              private fun refreshState() {
                   api("GET","/api/state",null,8000,true){result,error->
                       if(result==null) {
                           serviceReady=false
@@ -1810,7 +1801,7 @@ private fun populateSettings(value: JSONObject) {
           start=s.find("private fun updateState(value: JSONObject) {")
           end=s.find("private fun showMicrosoftCode(",start if start>=0 else 0)
           if start<0 or end<0: raise SystemExit("MainActivity updateState/showMicrosoftCode boundaries not found")
-          update_method = """private fun updateState(value: JSONObject) {
+          update_method = """              private fun updateState(value: JSONObject) {
                   val status=value.optString("status","等待连接")
                   if(this::gameStatus.isInitialized) gameStatus.text=status
                   val auth=value.optJSONObject("authInfo")
@@ -1862,17 +1853,17 @@ private fun populateSettings(value: JSONObject) {
           s=s[:start]+update_method+s[end:]
 
           # Ensure the game connection never starts its own separate login prompt if pre-login has not finished.
-          old_connect = """private fun connectGame() {
-                  saveSettings(true)
-              }"""
-          new_connect = """private fun connectGame() {
-                  if(!authAvailable) {
-                      requestMicrosoftLogin()
-                      toast("先完成 Microsoft 官方账号授权，再加入世界")
-                      return
-                  }
-                  saveSettings(true)
-              }"""
+          old_connect = """    private fun connectGame() {
+        saveSettings(true)
+    }"""
+          new_connect = """    private fun connectGame() {
+        if(!authAvailable) {
+            requestMicrosoftLogin()
+            toast("先完成 Microsoft 官方账号授权，再加入世界")
+            return
+        }
+        saveSettings(true)
+    }"""
           if old_connect in s:
               s=s.replace(old_connect,new_connect,1)
           else:
