@@ -2109,7 +2109,7 @@ jobs:
                   }
                   scroll.addView(frame, android.view.ViewGroup.LayoutParams(-1, -2))
 
-                  val background = ImageView(this).apply {
+                  val panoramaImage = ImageView(this).apply {
                       scaleType = ImageView.ScaleType.CENTER_CROP
                       contentDescription = "Minecraft Bedrock 原版主菜单全景背景"
                       try {
@@ -2120,7 +2120,7 @@ jobs:
                           setBackgroundColor(0xFF172C3A.toInt())
                       }
                   }
-                  frame.addView(background, android.view.ViewGroup.LayoutParams(-1, -1))
+                  frame.addView(panoramaImage, android.view.ViewGroup.LayoutParams(-1, -1))
                   frame.addView(View(this).apply {
                       setBackgroundColor(0x78081320)
                   }, android.view.ViewGroup.LayoutParams(-1, -1))
