@@ -91,15 +91,15 @@ jobs:
           s = p.read_text()
           if "versionCode 20003" not in s or "versionName '2.0.0-alpha.4'" not in s:
               raise SystemExit("App 版本号不是预期的 alpha.4，停止构建")
-          s = s.replace("versionCode 20003", "versionCode 20008", 1)
-          s = s.replace("versionName '2.0.0-alpha.4'", "versionName '2.0.0-alpha.9'", 1)
+          s = s.replace("versionCode 20003", "versionCode 20009", 1)
+          s = s.replace("versionName '2.0.0-alpha.4'", "versionName '2.0.0-alpha.10'", 1)
           p.write_text(s)
 
           # Use the Microsoft device-code flow provided by bedrock-protocol.
           # OnMsaCode is the actual OAuth callback; open its official verification URI once per code.
           p = Path("agent/public/index.html")
           s = p.read_text()
-          s = s.replace("2.0.0-alpha.3 · 本机控制台", "2.0.0-alpha.9 · 本机控制台")
+          s = s.replace("2.0.0-alpha.3 · 本机控制台", "2.0.0-alpha.10 · 本机控制台")
           old_state = "let settings=null,lastChatCount=0,lastLogs='';"
           new_state = "let settings=null,lastChatCount=0,lastLogs='',lastOpenedMicrosoftCode='';"
           if old_state not in s:
@@ -447,7 +447,7 @@ jobs:
                   chatInput = addEdit(chatCard, "发送给游戏内 AI 玩家", "")
                   addButton(chatCard, "发送聊天", true) { sendChat() }
                   logsView = addText(chatCard, "等待后台日志…", 12f, false, 0xFF9CAEC2.toInt())
-                  addText(root, "2.0.0-alpha.9 · 原生 Android 界面，不使用 HTML / WebView", 11f, false, 0xFF64748B.toInt())
+                  addText(root, "2.0.0-alpha.10 · 原生 Android 界面，官方 Microsoft 登录内嵌", 11f, false, 0xFF64748B.toInt())
               }
 
               private fun card(parent: LinearLayout, title: String): LinearLayout {
@@ -1015,6 +1015,370 @@ jobs:
           manifest.write_text(m)
           PY
 
+      - name: Embed official Microsoft sign-in page and wait for backend readiness
+        working-directory: BlockmateAI-Android
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re, textwrap
+
+          # Replace the external browser hand-off with an in-app WebView loading Microsoft's real verification page.
+          main_path = Path("app/src/main/java/com/blockmate/ai/MainActivity.kt")
+          main = main_path.read_text()
+          pattern = r"              private fun showMicrosoftCode\(code: String, link: String\) \{.*?              private fun renderWorlds"
+          replacement = """              private fun showMicrosoftCode(code: String, link: String) {
+                  val intent = Intent(this, MicrosoftLoginActivity::class.java)
+                      .putExtra("microsoft_code", code)
+                      .putExtra("verification_uri", link)
+                  startActivity(intent)
+              }
+
+              private fun renderWorlds"""
+          main, count = re.subn(pattern, lambda _: replacement, main, count=1, flags=re.S)
+          if count != 1:
+              raise SystemExit("MainActivity Microsoft sign-in handoff block not found")
+          main = main.replace("2.0.0-alpha.9 · 原生 Android 界面，不使用 HTML / WebView",
+                              "2.0.0-alpha.10 · 原生 Android 界面，官方 Microsoft 登录内嵌")
+          main_path.write_text(main)
+
+          # The WebView contains only the genuine Microsoft account page; it never collects or proxies passwords.
+          login_activity = r'''
+          package com.blockmate.ai
+
+          import android.app.Activity
+          import android.content.ClipData
+          import android.content.ClipboardManager
+          import android.content.Context
+          import android.content.Intent
+          import android.graphics.Color
+          import android.graphics.Typeface
+          import android.net.Uri
+          import android.os.Bundle
+          import android.os.Handler
+          import android.os.Looper
+          import android.view.Gravity
+          import android.webkit.CookieManager
+          import android.webkit.SslErrorHandler
+          import android.webkit.WebChromeClient
+          import android.webkit.WebResourceError
+          import android.webkit.WebResourceRequest
+          import android.webkit.WebSettings
+          import android.webkit.WebView
+          import android.webkit.WebViewClient
+          import android.widget.Button
+          import android.widget.LinearLayout
+          import android.widget.TextView
+          import android.widget.Toast
+          import org.json.JSONObject
+          import java.net.HttpURLConnection
+          import java.net.URL
+          import java.util.concurrent.Executors
+
+          class MicrosoftLoginActivity : Activity() {
+              companion object {
+                  private const val API_ROOT = "http://127.0.0.1:8765"
+                  private const val CONTROL_TOKEN = "blockmate-native-android-v2-2026"
+              }
+
+              private val handler = Handler(Looper.getMainLooper())
+              private val worker = Executors.newSingleThreadExecutor()
+              private var active = true
+              private var successHandled = false
+              private lateinit var web: WebView
+              private lateinit var status: TextView
+              private lateinit var codeView: TextView
+
+              private val authPoll = object : Runnable {
+                  override fun run() {
+                      if (!active || successHandled) return
+                      worker.execute {
+                          var account: JSONObject? = null
+                          var error: String? = null
+                          var conn: HttpURLConnection? = null
+                          try {
+                              conn = (URL(API_ROOT + "/api/state").openConnection() as HttpURLConnection).apply {
+                                  requestMethod = "GET"
+                                  connectTimeout = 3000
+                                  readTimeout = 3000
+                                  setRequestProperty("Accept", "application/json")
+                                  setRequestProperty("X-Control-Token", CONTROL_TOKEN)
+                              }
+                              val code = conn.responseCode
+                              val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+                              val raw = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: "{}"
+                              if (code !in 200..299) throw IllegalStateException("本机登录状态接口返回 HTTP " + code)
+                              account = JSONObject(raw).optJSONObject("authInfo")
+                          } catch (e: Exception) {
+                              error = e.message ?: "无法读取登录状态"
+                          } finally {
+                              conn?.disconnect()
+                          }
+
+                          handler.post {
+                              if (!active || successHandled) return@post
+                              val xuid = account?.optString("xuid", "") ?: ""
+                              val gamertag = account?.optString("gamertag", "") ?: ""
+                              if (xuid.isNotBlank() && xuid != "0" && gamertag.isNotBlank()) {
+                                  successHandled = true
+                                  status.text = "Xbox 登录成功\nGamertag：" + gamertag + "\nXUID：" + xuid
+                                  web.stopLoading()
+                                  handler.postDelayed({
+                                      setResult(Activity.RESULT_OK)
+                                      finish()
+                                  }, 1400)
+                              } else {
+                                  if (error != null && status.text.toString().startsWith("正在等待")) {
+                                      status.text = "正在等待 Microsoft 授权完成…\n" + error
+                                  }
+                                  handler.postDelayed(this, 1600)
+                              }
+                          }
+                      }
+                  }
+              }
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  window.statusBarColor = Color.rgb(12, 25, 40)
+                  window.navigationBarColor = Color.rgb(8, 17, 29)
+
+                  val code = intent.getStringExtra("microsoft_code").orEmpty()
+                  val supplied = intent.getStringExtra("verification_uri").orEmpty()
+                  val verificationUri = if (isMicrosoftHttpsUrl(supplied)) supplied else "https://www.microsoft.com/link"
+
+                  val root = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      setBackgroundColor(Color.rgb(10, 20, 34))
+                      setPadding(dp(12), dp(10), dp(12), dp(10))
+                  }
+                  setContentView(root)
+
+                  val top = LinearLayout(this).apply {
+                      orientation = LinearLayout.HORIZONTAL
+                      gravity = Gravity.CENTER_VERTICAL
+                  }
+                  root.addView(top, LinearLayout.LayoutParams(-1, dp(48)))
+                  val close = Button(this).apply {
+                      text = "返回"
+                      isAllCaps = false
+                      setTextColor(Color.WHITE)
+                      setBackgroundColor(Color.rgb(37, 54, 75))
+                      setOnClickListener { finish() }
+                  }
+                  top.addView(close, LinearLayout.LayoutParams(dp(72), dp(42)))
+                  val heading = TextView(this).apply {
+                      text = "Microsoft 账户登录"
+                      textSize = 19f
+                      setTextColor(Color.WHITE)
+                      setTypeface(typeface, Typeface.BOLD)
+                      gravity = Gravity.CENTER_VERTICAL
+                      setPadding(dp(10), 0, 0, 0)
+                  }
+                  top.addView(heading, LinearLayout.LayoutParams(0, -1, 1f))
+
+                  val panel = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      setPadding(dp(14), dp(10), dp(14), dp(10))
+                      background = android.graphics.drawable.GradientDrawable().apply {
+                          setColor(Color.rgb(24, 39, 58))
+                          cornerRadius = dp(14).toFloat()
+                          setStroke(dp(1), Color.rgb(56, 76, 101))
+                      }
+                  }
+                  val panelLp = LinearLayout.LayoutParams(-1, -2)
+                  panelLp.topMargin = dp(8)
+                  root.addView(panel, panelLp)
+
+                  val prompt = TextView(this).apply {
+                      text = "请在下方 Microsoft 官方页面中完成账号登录和设备授权"
+                      textSize = 13f
+                      setTextColor(Color.rgb(197, 211, 228))
+                  }
+                  panel.addView(prompt)
+
+                  codeView = TextView(this).apply {
+                      text = code
+                      textSize = 27f
+                      letterSpacing = 0.16f
+                      setTextColor(Color.WHITE)
+                      setTypeface(typeface, Typeface.BOLD)
+                      gravity = Gravity.CENTER
+                      setPadding(0, dp(9), 0, dp(7))
+                      setOnClickListener {
+                          val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                          clipboard.setPrimaryClip(ClipData.newPlainText("Microsoft device code", code))
+                          Toast.makeText(this@MicrosoftLoginActivity, "登录代码已复制", Toast.LENGTH_SHORT).show()
+                      }
+                  }
+                  panel.addView(codeView)
+
+                  status = TextView(this).apply {
+                      text = "正在等待 Microsoft 授权完成…"
+                      textSize = 12f
+                      setTextColor(Color.rgb(145, 190, 220))
+                      setPadding(0, dp(4), 0, 0)
+                  }
+                  panel.addView(status)
+
+                  val browser = Button(this).apply {
+                      text = "在系统浏览器中打开官方页面"
+                      isAllCaps = false
+                      setTextColor(Color.WHITE)
+                      setBackgroundColor(Color.rgb(37, 54, 75))
+                      setOnClickListener {
+                          try {
+                              startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(verificationUri)))
+                          } catch (e: Exception) {
+                              Toast.makeText(this@MicrosoftLoginActivity, "无法打开系统浏览器", Toast.LENGTH_LONG).show()
+                          }
+                      }
+                  }
+                  val browserLp = LinearLayout.LayoutParams(-1, dp(42))
+                  browserLp.topMargin = dp(6)
+                  panel.addView(browser, browserLp)
+
+                  web = WebView(this)
+                  web.settings.apply {
+                      javaScriptEnabled = true
+                      domStorageEnabled = true
+                      databaseEnabled = true
+                      loadsImagesAutomatically = true
+                      mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+                      allowFileAccess = false
+                      allowContentAccess = false
+                      javaScriptCanOpenWindowsAutomatically = false
+                      setSupportMultipleWindows(false)
+                  }
+                  CookieManager.getInstance().setAcceptCookie(true)
+                  CookieManager.getInstance().setAcceptThirdPartyCookies(web, true)
+                  web.webChromeClient = WebChromeClient()
+                  web.webViewClient = object : WebViewClient() {
+                      override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                          val target = request?.url ?: return true
+                          return !isMicrosoftHttpsUrl(target.toString())
+                      }
+
+                      override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
+                          super.onReceivedError(view, request, error)
+                          if (request?.isForMainFrame == true) {
+                              status.text = "Microsoft 页面加载失败。可使用上方系统浏览器按钮重试。"
+                          }
+                      }
+
+                      override fun onReceivedSslError(view: WebView?, handler: SslErrorHandler?, error: android.net.http.SslError?) {
+                          handler?.cancel()
+                          status.text = "Microsoft 页面证书校验失败，已阻止连接。"
+                      }
+                  }
+                  val webLp = LinearLayout.LayoutParams(-1, 0, 1f)
+                  webLp.topMargin = dp(8)
+                  root.addView(web, webLp)
+                  web.loadUrl(verificationUri)
+                  handler.postDelayed(authPoll, 1500)
+              }
+
+              private fun isMicrosoftHttpsUrl(raw: String): Boolean {
+                  return try {
+                      val uri = Uri.parse(raw)
+                      val host = uri.host?.lowercase() ?: return false
+                      if (uri.scheme != "https") return false
+                      val allowed = listOf(
+                          "microsoft.com", "microsoftonline.com", "live.com", "live.net",
+                          "msauth.net", "msftauth.net", "msftauthimages.net", "xbox.com",
+                          "xboxlive.com", "xboxservices.com", "aka.ms"
+                      )
+                      allowed.any { host == it || host.endsWith("." + it) }
+                  } catch (_: Exception) {
+                      false
+                  }
+              }
+
+              private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+
+              override fun onDestroy() {
+                  active = false
+                  handler.removeCallbacksAndMessages(null)
+                  if (::web.isInitialized) {
+                      web.stopLoading()
+                      web.destroy()
+                  }
+                  worker.shutdownNow()
+                  super.onDestroy()
+              }
+          }
+          '''
+          Path("app/src/main/java/com/blockmate/ai/MicrosoftLoginActivity.kt").write_text(login_activity)
+
+          # Keep the background engine's current Bedrock transport, only wait until its local API really listens.
+          agent_service_path = Path("app/src/main/java/com/blockmate/ai/AgentService.kt")
+          agent_service = agent_service_path.read_text()
+          if "import java.net.HttpURLConnection" not in agent_service:
+              agent_service = agent_service.replace(
+                  "import java.util.concurrent.TimeUnit",
+                  "import java.util.concurrent.TimeUnit\nimport java.net.HttpURLConnection\nimport java.net.URL",
+                  1
+              )
+          old_start = """                val child = builder.start()
+                process = child
+                isBackendAlive = true"""
+          new_start = """                val child = builder.start()
+                process = child
+                check(awaitDashboardReady(child, 75000L)) {
+                    "内置 AI 服务 75 秒内未打开本机控制接口。请查看运行日志，检查 Node 启动错误。"
+                }
+                isBackendAlive = true"""
+          if "awaitDashboardReady(child, 75000L)" not in agent_service:
+              if old_start not in agent_service:
+                  raise SystemExit("AgentService Node launch block not found")
+              agent_service = agent_service.replace(old_start, new_start, 1)
+
+          helper_anchor = "    private fun installAssets(assetPath: String, target: File) {"
+          helper = """    private fun awaitDashboardReady(child: Process, timeoutMs: Long): Boolean {
+                val deadline = System.currentTimeMillis() + timeoutMs
+                while (System.currentTimeMillis() < deadline) {
+                    if (!child.isAlive) return false
+                    var connection: HttpURLConnection? = null
+                    try {
+                        connection = (URL("http://127.0.0.1:8765/").openConnection() as HttpURLConnection).apply {
+                            requestMethod = "GET"
+                            connectTimeout = 600
+                            readTimeout = 600
+                            useCaches = false
+                        }
+                        val response = connection.responseCode
+                        if (response in 200..499) return true
+                    } catch (_: Exception) {
+                        // Node is still starting or has not bound the local loopback socket yet.
+                    } finally {
+                        connection?.disconnect()
+                    }
+                    Thread.sleep(250)
+                }
+                return false
+            }
+
+          """
+          if "private fun awaitDashboardReady" not in agent_service:
+              if helper_anchor not in agent_service:
+                  raise SystemExit("AgentService asset installer insertion point not found")
+              agent_service = agent_service.replace(helper_anchor, helper + helper_anchor, 1)
+
+          agent_service_path.write_text(agent_service)
+
+          manifest = Path("app/src/main/AndroidManifest.xml")
+          m = manifest.read_text()
+          activity_tag = '<activity android:name=".MicrosoftLoginActivity" android:exported="false" />'
+          if "MicrosoftLoginActivity" not in m:
+              if "</application>" not in m:
+                  raise SystemExit("Android manifest application close tag not found")
+              m = m.replace("</application>", "        " + activity_tag + "\n    </application>", 1)
+          if "android:usesCleartextTraffic=" not in m:
+              if "<application" not in m:
+                  raise SystemExit("Android manifest application element missing")
+              m = m.replace("<application", '<application\n        android:usesCleartextTraffic="true"', 1)
+          manifest.write_text(m)
+          PY
+
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
@@ -1068,6 +1432,13 @@ jobs:
           node tools/prepare-agent.mjs
           test -s app/src/main/assets/agent/node_modules/minecraft-data/minecraft-data/data/pc/common/features.json
           test -s app/src/main/assets/agent/node_modules/minecraft-data/minecraft-data/data/bedrock/common/features.json
+          # The native Android app no longer ships or loads the old HTML dashboard.
+          rm -rf app/src/main/assets/agent/public
+          # Strip non-runtime files from the packaged production dependencies.
+          find app/src/main/assets/agent/node_modules -type d \( -name .git -o -name .github -o -name test -o -name tests -o -name __tests__ -o -name docs -o -name examples -o -name example -o -name coverage -o -name benchmarks -o -name benchmark \) -prune -exec rm -rf {} +
+          find app/src/main/assets/agent -type f \( -name '*.map' -o -name '*.ts' -o -name '*.d.ts' -o -name '*.flow' -o -name '*.md' -o -name '*.markdown' -o -name '*.mdx' -o -name '*.spec.js' -o -name '*.test.js' \) -delete
+          echo 'Packaged agent assets after pruning:'
+          du -sh app/src/main/assets/agent app/src/main/assets/agent/node_modules
 
       - name: Bundle ARM64 Node runtime
         working-directory: BlockmateAI-Android
@@ -1126,7 +1497,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: BlockmateAI-2.0-alpha.9-arm64-debug-apk
+          name: BlockmateAI-2.0-alpha.10-arm64-debug-apk
           path: BlockmateAI-Android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
@@ -1134,8 +1505,8 @@ jobs:
       - name: Publish public GitHub Release download
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: blockmate-ai-2.0-alpha.9-public-20261101
-          name: Blockmate AI 2.0 alpha.9 APK (Public Download)
+          tag_name: blockmate-ai-2.0-alpha.10-public-20261102
+          name: Blockmate AI 2.0 alpha.10 APK (Public Download)
           draft: false
           prerelease: true
           files: BlockmateAI-Android/app/build/outputs/apk/debug/app-debug.apk
