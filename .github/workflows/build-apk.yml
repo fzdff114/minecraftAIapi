@@ -82,15 +82,15 @@ jobs:
           s = p.read_text()
           if "versionCode 20003" not in s or "versionName '2.0.0-alpha.4'" not in s:
               raise SystemExit("App 版本号不是预期的 alpha.4，停止构建")
-          s = s.replace("versionCode 20003", "versionCode 20013", 1)
-          s = s.replace("versionName '2.0.0-alpha.4'", "versionName '2.0.0-alpha.14'", 1)
+          s = s.replace("versionCode 20003", "versionCode 20014", 1)
+          s = s.replace("versionName '2.0.0-alpha.4'", "versionName '2.0.0-alpha.15'", 1)
           p.write_text(s)
 
           # Use the Microsoft device-code flow provided by bedrock-protocol.
           # OnMsaCode is the actual OAuth callback; open its official verification URI once per code.
           p = Path("agent/public/index.html")
           s = p.read_text()
-          s = s.replace("2.0.0-alpha.3 · 本机控制台", "2.0.0-alpha.14 · 本机控制台")
+          s = s.replace("2.0.0-alpha.3 · 本机控制台", "2.0.0-alpha.15 · 本机控制台")
           old_state = "let settings=null,lastChatCount=0,lastLogs='';"
           new_state = "let settings=null,lastChatCount=0,lastLogs='',lastOpenedMicrosoftCode='';"
           if old_state not in s:
@@ -2155,10 +2155,10 @@ jobs:
                   addButton(loginRow, "刷新状态", false) { refreshState() }
 
                   val menu = card(content, "开始")
-                  addMenuButton(menu, "开始游戏 · 选择服务器", true) { showPage(serverPage) }
-                  addMenuButton(menu, "角色更衣室 · 使用 Minecraft 原生界面", false) { openMinecraftProfile() }
-                  addMenuButton(menu, "AI 玩家与聊天日志", false) { showPage(logsPage) }
-                  addMenuButton(menu, "AI 服务设置", false) { showPage(aiPage) }
+                  addMenuButton(menu, "开始游戏", true) { showPage(serverPage) }
+                  addMenuButton(menu, "角色更衣室", false) { openMinecraftProfile() }
+                  addMenuButton(menu, "运行日志", false) { showPage(logsPage) }
+                  addMenuButton(menu, "AI 设置", false) { showPage(aiPage) }
                   addMenuButton(menu, "AI 行为设置", false) { showPage(behaviorPage) }
 
                   val footer = LinearLayout(this).apply {
@@ -2277,6 +2277,91 @@ jobs:
               skin_start=s.rfind("\n",0,skin_start)+1
               skin_end=s.rfind("\n",0,skin_end)+1
               s=s[:skin_start]+s[skin_end:]
+          p.write_text(s)
+          PY
+
+      - name: Refine Minecraft title buttons and remove obsolete skin-picker code
+        working-directory: BlockmateAI-Android
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          p=Path("app/src/main/java/com/blockmate/ai/MainActivity.kt")
+          s=p.read_text()
+
+          # Minecraft's title-screen buttons use a light bevelled rectangular treatment,
+          # not the teal rounded cards from the earlier standalone control UI.
+          start=s.find("private fun addMenuButton(")
+          end=s.find("private fun buildServerPage()",start if start>=0 else 0)
+          if start<0 or end<0:
+              raise SystemExit("Minecraft main-menu button and page boundaries not found")
+          start=s.rfind("\n",0,start)+1
+          end=s.rfind("\n",0,end)+1
+          method="""    private fun addMenuButton(parent: LinearLayout, label: String, primary: Boolean, action: () -> Unit) {
+                  val normal = GradientDrawable(
+                      GradientDrawable.Orientation.TOP_BOTTOM,
+                      intArrayOf(0xFFF1F1F1.toInt(), 0xFFC5C9CB.toInt())
+                  ).apply {
+                      cornerRadius = dp(3).toFloat()
+                      setStroke(dp(1), 0xFF64717A.toInt())
+                  }
+                  val pressed = GradientDrawable(
+                      GradientDrawable.Orientation.TOP_BOTTOM,
+                      intArrayOf(0xFF9BA4A8.toInt(), 0xFF737E83.toInt())
+                  ).apply {
+                      cornerRadius = dp(3).toFloat()
+                      setStroke(dp(1), 0xFF46525A.toInt())
+                  }
+                  val states = android.graphics.drawable.StateListDrawable().apply {
+                      addState(intArrayOf(android.R.attr.state_pressed), pressed)
+                      addState(intArrayOf(), normal)
+                  }
+                  val button=LinearLayout(this).apply {
+                      orientation=LinearLayout.VERTICAL
+                      gravity=Gravity.CENTER
+                      setPadding(dp(14),dp(5),dp(14),dp(5))
+                      background=states
+                      elevation=dp(2).toFloat()
+                      isClickable=true
+                      isFocusable=true
+                      setOnClickListener { action() }
+                  }
+                  val title=TextView(this).apply {
+                      text=label
+                      textSize=17f
+                      gravity=Gravity.CENTER
+                      setTextColor(0xFF20272B.toInt())
+                      setTypeface(typeface,Typeface.BOLD)
+                  }
+                  val subtitle=TextView(this).apply {
+                      text=if(primary) detailFor(label) else detailFor(label)
+                      textSize=10.5f
+                      gravity=Gravity.CENTER
+                      setTextColor(0xFF526069.toInt())
+                  }
+                  button.addView(title)
+                  button.addView(subtitle)
+                  val lp=LinearLayout.LayoutParams(-1,dp(58))
+                  lp.topMargin=dp(7)
+                  parent.addView(button,lp)
+              }
+
+              private fun detailFor(label:String):String = when(label) {
+                  "开始游戏" -> "选择服务器、好友世界或 Realm"
+                  "角色更衣室" -> "打开 Minecraft 原生角色与皮肤界面"
+                  "AI 设置" -> "配置 AI 服务地址、密钥和模型"
+                  "AI 行为设置" -> "设置 AI 玩家的自主行为"
+                  "运行日志" -> "查看聊天与连接日志"
+                  else -> "方块伙伴 AI 2.0"
+              }
+
+          """
+          s=s[:start]+method+s[end:]
+
+          # The game screen is opened in Minecraft itself; remove the unused custom skin-import request constant.
+          s=s.replace('                  private const val REQUEST_SKIN = 841\\n','')
+          s=s.replace('              private const val REQUEST_SKIN = 841\\n','')
           p.write_text(s)
           PY
 
@@ -2416,7 +2501,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: BlockmateAI-2.0-alpha.14-arm64-debug-apk
+          name: BlockmateAI-2.0-alpha.15-arm64-debug-apk
           path: BlockmateAI-Android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
@@ -2424,8 +2509,8 @@ jobs:
       - name: Publish public GitHub Release download
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: blockmate-ai-2.0-alpha.14-public-20261102
-          name: Blockmate AI 2.0 alpha.14 APK (Public Download)
+          tag_name: blockmate-ai-2.0-alpha.15-public-20261102
+          name: Blockmate AI 2.0 alpha.15 APK (Public Download)
           draft: false
           prerelease: true
           files: BlockmateAI-Android/app/build/outputs/apk/debug/app-debug.apk
