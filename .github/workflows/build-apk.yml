@@ -82,15 +82,15 @@ jobs:
           s = p.read_text()
           if "versionCode 20003" not in s or "versionName '2.0.0-alpha.4'" not in s:
               raise SystemExit("App 版本号不是预期的 alpha.4，停止构建")
-          s = s.replace("versionCode 20003", "versionCode 20016", 1)
-          s = s.replace("versionName '2.0.0-alpha.4'", "versionName '2.0.0-alpha.17'", 1)
+          s = s.replace("versionCode 20003", "versionCode 20017", 1)
+          s = s.replace("versionName '2.0.0-alpha.4'", "versionName '2.0.0-alpha.18'", 1)
           p.write_text(s)
 
           # Use the Microsoft device-code flow provided by bedrock-protocol.
           # OnMsaCode is the actual OAuth callback; open its official verification URI once per code.
           p = Path("agent/public/index.html")
           s = p.read_text()
-          s = s.replace("2.0.0-alpha.3 · 本机控制台", "2.0.0-alpha.17 · 本机控制台")
+          s = s.replace("2.0.0-alpha.3 · 本机控制台", "2.0.0-alpha.18 · 本机控制台")
           old_state = "let settings=null,lastChatCount=0,lastLogs='';"
           new_state = "let settings=null,lastChatCount=0,lastLogs='',lastOpenedMicrosoftCode='';"
           if old_state not in s:
@@ -2662,6 +2662,341 @@ jobs:
           p.write_text(s)
           PY
 
+      - name: Add in-app AI skin studio and lock the slim runtime to Bedrock 1.26.60
+        working-directory: BlockmateAI-Android
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          # Native Android skin studio: images remain inside this app; no Minecraft app/deep link is launched.
+          p = Path("app/src/main/java/com/blockmate/ai/MainActivity.kt")
+          s = p.read_text()
+
+          for imp in [
+              "import android.util.Base64\n",
+              "import java.io.File\n"
+          ]:
+              if imp.strip() not in s:
+                  s = s.replace("import android.widget.Button", imp + "import android.widget.Button", 1)
+
+          if "private const val REQUEST_SKIN = 842" not in s:
+              anchor = 'private const val MINECRAFT_PACKAGE = "com.mojang.minecraftpe"'
+              if anchor in s:
+                  s = s.replace(anchor, "private const val REQUEST_SKIN = 842", 1)
+              else:
+                  anchor = "companion object {"
+                  pos = s.find(anchor)
+                  if pos < 0: raise SystemExit("MainActivity companion object missing")
+                  close = s.find("}", pos)
+                  if close < 0: raise SystemExit("MainActivity companion object end missing")
+                  s = s[:close] + "private const val REQUEST_SKIN = 842\n                  " + s[close:]
+
+          fields_anchor = "private lateinit var logsPage: ScrollView"
+          fields_extra = """
+              private lateinit var skinPage: ScrollView
+              private lateinit var skinPreview: ImageView
+              private lateinit var skinStatus: TextView
+              private lateinit var skinList: LinearLayout
+              private var selectedSkinFile: File? = null
+          """
+          if "private lateinit var skinPage: ScrollView" not in s:
+              if fields_anchor not in s: raise SystemExit("MainActivity page field anchor missing")
+              s = s.replace(fields_anchor, fields_anchor + "\n" + fields_extra, 1)
+
+          s = s.replace(
+              "logsPage = buildLogsPage()",
+              "logsPage = buildLogsPage()\n                  skinPage = buildSkinPage()",
+              1
+          )
+
+          # Replace the external Minecraft profile hand-off with an in-app page.
+          old_entry = 'addMenuButton(actions, "角色与皮肤", false) { openMinecraftProfile() }'
+          new_entry = 'addMenuButton(actions, "AI 玩家皮肤", false) { showPage(skinPage) }'
+          if old_entry not in s:
+              raise SystemExit("Home menu external skin hand-off not found")
+          s = s.replace(old_entry, new_entry, 1)
+
+          skin_page = r'''
+              private fun buildSkinPage(): ScrollView {
+                  val scroll = ScrollView(this).apply {
+                      isFillViewport = true
+                      setBackgroundColor(Color.rgb(9, 17, 29))
+                  }
+                  val root = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      setPadding(dp(16), dp(16), dp(16), dp(30))
+                  }
+                  scroll.addView(root)
+                  val header = card(root, "AI 玩家外观")
+                  skinStatus = addText(header, "在这里管理 AI 玩家使用的皮肤。皮肤文件保存在本应用内部。", 13f, false, 0xFFD4DFEC.toInt())
+                  skinPreview = ImageView(this).apply {
+                      adjustViewBounds = true
+                      scaleType = ImageView.ScaleType.FIT_CENTER
+                      background = rounded(0xFF0B1626.toInt(), 12, 0xFF40536A.toInt())
+                      setPadding(dp(10), dp(10), dp(10), dp(10))
+                  }
+                  header.addView(skinPreview, LinearLayout.LayoutParams(-1, dp(190)))
+                  val actions = row(header)
+                  addButton(actions, "导入 PNG 皮肤", true) { chooseSkin() }
+                  addButton(actions, "应用到 AI 玩家", false) { applySelectedSkin() }
+                  val secondary = row(header)
+                  addButton(secondary, "恢复默认皮肤", false) { clearAppliedSkin() }
+                  addButton(secondary, "返回主菜单", false) { showPage(homePage) }
+                  val saved = card(root, "已保存的皮肤")
+                  skinList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+                  saved.addView(skinList, LinearLayout.LayoutParams(-1, -2))
+                  addText(root,
+                      "仅支持 64×64 PNG 经典皮肤。新皮肤会应用到 AI 玩家；由于皮肤数据在 Bedrock 登录握手时发送，保存后需要断开并重新连接 AI 玩家才会生效。此页面不会打开 Minecraft，也不会修改你的 Xbox 账号皮肤。",
+                      12f, false, 0xFFD0DBE8.toInt())
+                  refreshSkinLibrary()
+                  return scroll
+              }
+
+              private fun skinDirectory(): File = File(filesDir, "skins")
+
+              private fun refreshSkinLibrary() {
+                  val directory = skinDirectory()
+                  if (!directory.exists()) directory.mkdirs()
+                  skinList.removeAllViews()
+                  val files = directory.listFiles()?.filter {
+                      it.isFile && it.extension.equals("png", true)
+                  }?.sortedByDescending { it.lastModified() } ?: emptyList()
+                  if (selectedSkinFile == null || selectedSkinFile?.exists() != true) {
+                      selectedSkinFile = files.firstOrNull()
+                  }
+                  if (files.isEmpty()) {
+                      addText(skinList, "还没有导入皮肤。请先选择一张 64×64 PNG。", 13f, false, 0xFF9CAEC2.toInt())
+                  } else {
+                      for (file in files) {
+                          val label = if (file == selectedSkinFile) "✓  " + file.name else file.name
+                          addButton(skinList, label, file == selectedSkinFile) {
+                              selectedSkinFile = file
+                              showSkinPreview(file)
+                              refreshSkinLibrary()
+                          }
+                      }
+                  }
+                  selectedSkinFile?.let { showSkinPreview(it) }
+              }
+
+              private fun showSkinPreview(file: File) {
+                  val bitmap = BitmapFactory.decodeFile(file.absolutePath)
+                  if (bitmap != null) {
+                      skinPreview.setImageBitmap(bitmap)
+                      skinStatus.text = "已选择：" + file.name + " · " + bitmap.width + "×" + bitmap.height
+                  }
+              }
+
+              private fun chooseSkin() {
+                  val pick = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                      addCategory(Intent.CATEGORY_OPENABLE)
+                      type = "image/png"
+                  }
+                  startActivityForResult(pick, REQUEST_SKIN)
+              }
+
+              @Deprecated("Use Activity Result API after project migration")
+              override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+                  super.onActivityResult(requestCode, resultCode, data)
+                  if (requestCode != REQUEST_SKIN || resultCode != RESULT_OK) return
+                  val uri = data?.data ?: return
+                  io.execute {
+                      try {
+                          val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                          contentResolver.openInputStream(uri)?.use {
+                              BitmapFactory.decodeStream(it, null, bounds)
+                          }
+                          if (bounds.outWidth != 64 || bounds.outHeight != 64) {
+                              throw IllegalArgumentException("皮肤 PNG 必须为 64×64 像素，当前为 " + bounds.outWidth + "×" + bounds.outHeight)
+                          }
+                          val directory = skinDirectory()
+                          if (!directory.exists() && !directory.mkdirs()) {
+                              throw IllegalStateException("无法创建应用内皮肤目录")
+                          }
+                          val target = File(directory, "skin-" + System.currentTimeMillis() + ".png")
+                          val source = contentResolver.openInputStream(uri)
+                              ?: throw IllegalStateException("无法读取所选 PNG")
+                          source.use { input ->
+                              target.outputStream().use { output -> input.copyTo(output) }
+                          }
+                          runOnUiThread {
+                              selectedSkinFile = target
+                              refreshSkinLibrary()
+                              toast("皮肤已导入应用内部")
+                          }
+                      } catch (e: Exception) {
+                          runOnUiThread { toast(e.message ?: "导入皮肤失败") }
+                      }
+                  }
+              }
+
+              private fun applySelectedSkin() {
+                  val file = selectedSkinFile
+                  if (file == null || !file.exists()) {
+                      toast("请先导入或选择一张皮肤 PNG")
+                      return
+                  }
+                  io.execute {
+                      try {
+                          val bitmap = BitmapFactory.decodeFile(file.absolutePath)
+                              ?: throw IllegalArgumentException("无法解码皮肤 PNG")
+                          if (bitmap.width != 64 || bitmap.height != 64) {
+                              throw IllegalArgumentException("皮肤尺寸必须为 64×64")
+                          }
+                          val pixels = IntArray(64 * 64)
+                          bitmap.getPixels(pixels, 0, 64, 0, 0, 64, 64)
+                          val rgba = ByteArray(64 * 64 * 4)
+                          for (i in pixels.indices) {
+                              val c = pixels[i]
+                              val offset = i * 4
+                              rgba[offset] = ((c shr 16) and 0xff).toByte()
+                              rgba[offset + 1] = ((c shr 8) and 0xff).toByte()
+                              rgba[offset + 2] = (c and 0xff).toByte()
+                              rgba[offset + 3] = ((c ushr 24) and 0xff).toByte()
+                          }
+                          val payload = JSONObject()
+                              .put("width", 64)
+                              .put("height", 64)
+                              .put("armSize", "wide")
+                              .put("rgbaBase64", Base64.encodeToString(rgba, Base64.NO_WRAP))
+                          runOnUiThread {
+                              api("POST", "/api/skin/apply", payload, 20000) { result, error ->
+                                  if (error != null) {
+                                      skinStatus.text = "应用失败：" + error
+                                      toast("皮肤应用失败：" + error)
+                                  } else {
+                                      skinStatus.text = "已保存到 AI 玩家。请断开并重新连接 AI 玩家以应用新外观。"
+                                      toast(result?.optString("message", "皮肤已保存") ?: "皮肤已保存")
+                                  }
+                              }
+                          }
+                      } catch (e: Exception) {
+                          runOnUiThread { toast(e.message ?: "处理皮肤失败") }
+                      }
+                  }
+              }
+
+              private fun clearAppliedSkin() {
+                  api("POST", "/api/skin/clear", JSONObject()) { result, error ->
+                      if (error != null) toast("恢复默认皮肤失败：" + error)
+                      else {
+                          skinStatus.text = "已恢复默认 AI 玩家皮肤。下次连接时生效。"
+                          toast(result?.optString("message", "已恢复默认皮肤") ?: "已恢复默认皮肤")
+                      }
+                  }
+              }
+
+          '''
+          if "private fun buildSkinPage(): ScrollView" not in s:
+              anchor = "private fun buildServerPage()"
+              pos = s.find(anchor)
+              if pos < 0: raise SystemExit("MainActivity buildServerPage insertion anchor missing")
+              line = s.rfind("\n", 0, pos) + 1
+              s = s[:line] + skin_page + s[line:]
+
+          # The old Minecraft profile deep-link helpers are no longer used.
+          a = s.find("private fun openMinecraftProfile()")
+          b = s.find("private fun api(", a if a >= 0 else 0)
+          if a >= 0 and b > a:
+              a = s.rfind("\n", 0, a) + 1
+              b = s.rfind("\n", 0, b) + 1
+              s = s[:a] + s[b:]
+
+          # Version data is intentionally trimmed to 1.26.60; show and enforce that supported version.
+          s = s.replace('versionInput.setText(server.optString("version", "1.26.60"))',
+                        'versionInput.setText("1.26.60")\n                  versionInput.isEnabled = false')
+          s = s.replace('server.put("version", versionInput.text.toString().trim().ifBlank { "1.26.60" })',
+                        'server.put("version", "1.26.60")')
+
+          p.write_text(s)
+
+          # Keep the Bedrock client skin cache in app-private storage and inject it into the login packet.
+          p = Path("agent/src/bedrock-transport.ts")
+          s = p.read_text()
+          anchor = "const client = bedrock.createClient(options);"
+          injected = """const skinFile = require('node:path').join(require('node:path').dirname(this.authFolder), 'selected-skin.json');
+          try {
+            const fs = require('node:fs');
+            if (fs.existsSync(skinFile)) {
+              options.skinData = JSON.parse(fs.readFileSync(skinFile, 'utf8'));
+              this.hooks.log('已载入应用内选择的 AI 玩家皮肤');
+            }
+          } catch (error:any) {
+            this.hooks.log('读取 AI 玩家皮肤失败：' + (error instanceof Error ? error.message : String(error)));
+          }
+          const client = bedrock.createClient(options);"""
+          if "options.skinData = JSON.parse" not in s:
+              if anchor not in s: raise SystemExit("Bedrock createClient insertion anchor missing")
+              s = s.replace(anchor, injected, 1)
+          p.write_text(s)
+
+          # Save the selected skin as a classic Bedrock skin-data object; no Minecraft app is called.
+          p = Path("agent/src/dashboard.ts")
+          s = p.read_text()
+          old_import = "import { mkdir, rm } from 'node:fs/promises';"
+          if old_import in s:
+              s = s.replace(old_import, "import { mkdir, rm, writeFile } from 'node:fs/promises';", 1)
+          if "case '/api/skin/apply':" not in s:
+              anchor = "case '/api/settings': {"
+              route = """case '/api/skin/apply': {
+                        const width = Number(body.width);
+                        const height = Number(body.height);
+                        const encoded = String(body.rgbaBase64 ?? '');
+                        if (width !== 64 || height !== 64) throw new Error('AI 玩家皮肤必须为 64×64');
+                        if (!/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) throw new Error('皮肤像素数据格式无效');
+                        const rgba = Buffer.from(encoded, 'base64');
+                        if (rgba.length !== width * height * 4) throw new Error('皮肤像素数据长度不正确');
+                        const resourcePatch = Buffer.from(JSON.stringify({
+                            geometry: { default: 'geometry.humanoid.custom' }
+                        }), 'utf8').toString('base64');
+                        const skinData = {
+                            SkinId: randomBytes(16).toString('hex'),
+                            PlayFabId: '',
+                            SkinResourcePatch: resourcePatch,
+                            SkinImageWidth: width,
+                            SkinImageHeight: height,
+                            SkinData: rgba.toString('base64'),
+                            CapeImageWidth: 0,
+                            CapeImageHeight: 0,
+                            CapeData: '',
+                            CapeId: '',
+                            SkinGeometryData: '',
+                            SkinGeometryDataEngineVersion: '',
+                            SkinAnimationData: '',
+                            PremiumSkin: false,
+                            PersonaSkin: false,
+                            CapeOnClassicSkin: false,
+                            ArmSize: body.armSize === 'slim' ? 'slim' : 'wide',
+                            SkinColor: '#0',
+                            AnimatedImageData: [],
+                            PersonaPieces: [],
+                            PieceTintColors: []
+                        };
+                        await writeFile(join(this.dataDir, 'selected-skin.json'), JSON.stringify(skinData), { mode: 0o600 });
+                        this.json(res, 200, { ok: true, message: 'AI 玩家皮肤已保存；下次 Bedrock 登录时应用。' });
+                        return;
+                    }
+                    case '/api/skin/clear': {
+                        await rm(join(this.dataDir, 'selected-skin.json'), { force: true });
+                        this.json(res, 200, { ok: true, message: '已恢复默认 AI 玩家皮肤；下次 Bedrock 登录时生效。' });
+                        return;
+                    }
+                    """
+              if anchor not in s: raise SystemExit("Dashboard settings route insertion anchor missing")
+              s = s.replace(anchor, route + anchor, 1)
+          p.write_text(s)
+
+          # Limit this build to the protocol dataset that is actually packaged and tested.
+          p = Path("agent/src/config.ts")
+          s = p.read_text()
+          s = s.replace(
+              "version: typeof s.version === 'string' && s.version.trim() ? s.version.trim() : DEFAULT_SETTINGS.server.version,",
+              "version: '1.26.60',"
+          )
+          p.write_text(s)
+          PY
+
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
@@ -2716,21 +3051,12 @@ jobs:
           test -s app/src/main/assets/agent/node_modules/minecraft-data/minecraft-data/data/pc/common/features.json
           test -s app/src/main/assets/agent/node_modules/minecraft-data/minecraft-data/data/bedrock/common/features.json
           # The native Android app no longer ships or loads the old HTML dashboard.
-          # The native menu now hands character/skin switching to Minecraft's own Dressing Room.
-          # Remove any leftover standalone PNG-picker source and import-only resources.
+          # Keep the in-app AI skin studio. Remove only obsolete public-storage imports.
           python3 - <<'PY'
           from pathlib import Path
-          import re
           p=Path("app/src/main/java/com/blockmate/ai/MainActivity.kt")
           src=p.read_text()
-          if "private fun chooseSkin()" in src:
-              a=src.find("private fun chooseSkin()")
-              b=src.find("private fun api(",a)
-              if a>=0 and b>a:
-                  a=src.rfind("\\n",0,a)+1
-                  b=src.rfind("\\n",0,b)+1
-                  src=src[:a]+src[b:]
-          for imp in ["import android.provider.MediaStore\\n","import android.provider.OpenableColumns\\n","import android.os.Environment\\n","import android.content.ContentValues\\n","import java.io.FileOutputStream\\n"]:
+          for imp in ["import android.provider.MediaStore\\n","import android.os.Environment\\n","import android.content.ContentValues\\n"]:
               src=src.replace(imp,"")
           p.write_text(src)
           PY
@@ -2740,6 +3066,52 @@ jobs:
           find app/src/main/assets/agent -type f \( -name '*.map' -o -name '*.ts' -o -name '*.d.ts' -o -name '*.flow' -o -name '*.md' -o -name '*.markdown' -o -name '*.mdx' -o -name '*.spec.js' -o -name '*.test.js' \) -delete
           echo 'Packaged agent assets after pruning:'
           du -sh app/src/main/assets/agent app/src/main/assets/agent/node_modules
+          # Keep only files referenced by the Bedrock 1.26.60 data map plus common protocol metadata.
+          python3 - <<'PY'
+          from pathlib import Path
+          import json, shutil
+
+          root=Path("app/src/main/assets/agent/node_modules/minecraft-data/minecraft-data/data")
+          mapping=json.loads((root/"dataPaths.json").read_text())
+          keep=set()
+          for field, directory in mapping["bedrock"]["1.26.60"].items():
+              filename = "proto.yml" if field == "proto" else "types.yml" if field == "types" else field + ".json"
+              keep.add((Path(directory)/filename).as_posix())
+          for platform in ("bedrock","pc"):
+              common=root/platform/"common"
+              if common.exists():
+                  for f in common.rglob("*"):
+                      if f.is_file(): keep.add(f.relative_to(root).as_posix())
+          keep.add("dataPaths.json")
+          for f in list(root.rglob("*")):
+              if f.is_file() and f.relative_to(root).as_posix() not in keep:
+                  f.unlink()
+          for d in sorted((x for x in root.rglob("*") if x.is_dir()), key=lambda x: len(x.parts), reverse=True):
+              try: d.rmdir()
+              except OSError: pass
+          # This nested TypeScript compiler is a build-time dependency of jsp-raknet, not a runtime dependency.
+          shutil.rmtree(Path("app/src/main/assets/agent/node_modules/jsp-raknet/node_modules/typescript"), ignore_errors=True)
+          # The app always explicitly selects jsp-raknet; native RakNet backends are unused.
+          shutil.rmtree(Path("app/src/main/assets/agent/node_modules/raknet-native"), ignore_errors=True)
+          shutil.rmtree(Path("app/src/main/assets/agent/node_modules/raknet-node"), ignore_errors=True)
+          PY
+          echo 'Slim Bedrock dataset and runtime modules:'
+          du -sh app/src/main/assets/agent/node_modules/minecraft-data/minecraft-data/data app/src/main/assets/agent/node_modules
+          # Verify the actual packaged runtime data and Bedrock client still load after pruning.
+          cd app/src/main/assets/agent
+          node - <<'NODE'
+          const assert = require('node:assert/strict');
+          const mcData = require('minecraft-data')('bedrock_1.26.60');
+          assert.equal(mcData.version.minecraftVersion, '1.26.60');
+          assert.ok(mcData.protocol && mcData.protocol.types);
+          assert.ok(mcData.defaultSkin);
+          const bedrock = require('bedrock-protocol');
+          assert.equal(typeof bedrock.createClient, 'function');
+          const options = require('bedrock-protocol/src/options');
+          options.validateOptions({version:'1.26.60', transport:'raknet'});
+          console.log('PASS: Bedrock 1.26.60 data, default skin, protocol serializer inputs and client module load');
+          NODE
+          cd ../../../../..
 
       - name: Bundle ARM64 Node runtime
         working-directory: BlockmateAI-Android
@@ -2798,7 +3170,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: BlockmateAI-2.0-alpha.17-arm64-debug-apk
+          name: BlockmateAI-2.0-alpha.18-arm64-debug-apk
           path: BlockmateAI-Android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
@@ -2806,8 +3178,8 @@ jobs:
       - name: Publish public GitHub Release download
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: blockmate-ai-2.0-alpha.17-public-20261102
-          name: Blockmate AI 2.0 alpha.17 APK (Public Download)
+          tag_name: blockmate-ai-2.0-alpha.18-public-20261102
+          name: Blockmate AI 2.0 alpha.18 APK (Public Download)
           draft: false
           prerelease: true
           files: BlockmateAI-Android/app/build/outputs/apk/debug/app-debug.apk
