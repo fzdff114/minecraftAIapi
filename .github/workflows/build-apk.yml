@@ -2293,9 +2293,11 @@ jobs:
           # Minecraft's title-screen buttons use a light bevelled rectangular treatment,
           # not the teal rounded cards from the earlier standalone control UI.
           start=s.find("private fun addMenuButton(")
-          end=s.find("private fun buildServerPage()",start if start>=0 else 0)
-          if start<0 or end<0:
-              raise SystemExit("Minecraft main-menu button and page boundaries not found")
+          if start < 0:
+              raise SystemExit("Minecraft main-menu button method not found")
+          end=s.find("private fun ",start+len("private fun addMenuButton("))
+          if end < 0:
+              raise SystemExit("Next MainActivity method after title button not found")
           start=s.rfind("\n",0,start)+1
           end=s.rfind("\n",0,end)+1
           method="""    private fun addMenuButton(parent: LinearLayout, label: String, primary: Boolean, action: () -> Unit) {
@@ -2360,8 +2362,7 @@ jobs:
           s=s[:start]+method+s[end:]
 
           # The game screen is opened in Minecraft itself; remove the unused custom skin-import request constant.
-          s=s.replace('                  private const val REQUEST_SKIN = 841\\n','')
-          s=s.replace('              private const val REQUEST_SKIN = 841\\n','')
+          s=re.sub(r"(?m)^\\s*private const val REQUEST_SKIN = 841\\s*\\n","",s)
           p.write_text(s)
           PY
 
