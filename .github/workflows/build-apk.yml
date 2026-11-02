@@ -2764,12 +2764,17 @@ jobs:
           manifest = Path("app/src/main/AndroidManifest.xml")
           m = manifest.read_text()
           if 'android:name="com.nzl.hell"' not in m:
-              query_block = """  <queries>
-              <package android:name="com.nzl.hell" />
-              <package android:name="com.mojang.minecraftpe" />
-          </queries>
-          """
-              m = re.sub(r"(<manifest\\b[^>]*>)", lambda match: match.group(1) + "\\n" + query_block, m, count=1)
+              query_block = chr(10).join([
+                  "  <queries>",
+                  '    <package android:name="com.nzl.hell" />',
+                  '    <package android:name="com.mojang.minecraftpe" />',
+                  "  </queries>"
+              ])
+              start = m.find("<manifest")
+              end = m.find(">", start)
+              if start < 0 or end < 0:
+                  raise SystemExit("Minecraft AndroidManifest.xml 根节点格式异常")
+              m = m[:end + 1] + chr(10) + query_block + chr(10) + m[end + 1:]
               if 'android:name="com.nzl.hell"' not in m:
                   raise SystemExit("无法为 Minecraft 客户端添加 Android package visibility 查询")
               manifest.write_text(m)
