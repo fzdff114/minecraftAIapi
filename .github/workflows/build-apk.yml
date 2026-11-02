@@ -2914,7 +2914,6 @@ jobs:
           # Keep the Bedrock client skin cache in app-private storage and inject it into the login packet.
           p = Path("agent/src/bedrock-transport.ts")
           s = p.read_text()
-          anchor = "const client = bedrock.createClient(options);"
           injected = """const skinFile = require('node:path').join(require('node:path').dirname(this.authFolder), 'selected-skin.json');
           try {
             const fs = require('node:fs');
@@ -2925,10 +2924,20 @@ jobs:
           } catch (error:any) {
             this.hooks.log('读取 AI 玩家皮肤失败：' + (error instanceof Error ? error.message : String(error)));
           }
-          const client = bedrock.createClient(options);"""
+          """
           if "options.skinData = JSON.parse" not in s:
-              if anchor not in s: raise SystemExit("Bedrock createClient insertion anchor missing")
-              s = s.replace(anchor, injected, 1)
+              match = re.search(r"(?m)^([ 	]*const clients*=s*[^;\n]*createClient\(options\)\s*;)", s)
+              if match is None:
+                  pos = s.find("createClient(options)")
+                  if pos < 0: raise SystemExit("Bedrock createClient(options) call missing")
+                  line_start = s.rfind("\\n", 0, pos) + 1
+                  line_end = s.find("\\n", pos)
+                  if line_end < 0: line_end = len(s)
+                  line = s[line_start:line_end]
+                  s = s[:line_start] + injected + line + s[line_end:]
+              else:
+                  line = match.group(1)
+                  s = s[:match.start()] + injected + line + s[match.end():]
           p.write_text(s)
 
           # Save the selected skin as a classic Bedrock skin-data object; no Minecraft app is called.
