@@ -63,6 +63,18 @@ jobs:
           unzip -q .ci/injector.zip -d .
           test -f BlockmateAPKInjector/app/build.gradle
           test -f BlockmateAPKInjector/patchdex/src/main/java/com/blockmate/injected/AiActivity.java
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("BlockmateAPKInjector/app/build.gradle")
+          s = p.read_text()
+          old = "'META-INF/INDEX.LIST'"
+          new = "'META-INF/INDEX.LIST', 'META-INF/versions/**'"
+          if "META-INF/versions/**" not in s:
+              if old not in s:
+                  raise SystemExit("Cannot locate Gradle metadata exclusions")
+              s = s.replace(old, new, 1)
+              p.write_text(s)
+          PY
 
       - name: Build Android-compatible Apktool engine
         working-directory: BlockmateAPKInjector
