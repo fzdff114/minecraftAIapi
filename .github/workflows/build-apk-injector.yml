@@ -38,6 +38,7 @@ jobs:
           test -n "$ANDROID_HOME"
           SDKMANAGER="$(command -v sdkmanager || find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | sort | tail -n 1)"
           test -x "$SDKMANAGER"
+          echo "$(dirname "$SDKMANAGER")" >> "$GITHUB_PATH"
           yes | "$SDKMANAGER" --licenses >/dev/null || true
           "$SDKMANAGER" "platforms;android-${ANDROID_PLATFORM}" "build-tools;${BUILD_TOOLS}"
 
