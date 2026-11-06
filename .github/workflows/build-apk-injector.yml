@@ -1,0 +1,123 @@
+name: Build and publish Blockmate APK Injector
+
+on:
+  push:
+    branches: ["feature/apk-injector"]
+    paths:
+      - "tools/injector-source/**"
+      - ".github/workflows/build-apk-injector.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  JAVA_VERSION: "17"
+  ANDROID_PLATFORM: "35"
+  BUILD_TOOLS: "35.0.0"
+  SOURCE_SHA256: "eb9bdd0be69fe49e3b4931ff95d959bdf73ade2c437b9aa8191c98858596d0a3"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.14.4"
+
+      - name: Install Android SDK packages
+        run: sdkmanager "platforms;android-${ANDROID_PLATFORM}" "build-tools;${BUILD_TOOLS}"
+
+      - name: Restore and verify injector source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .ci
+          cat tools/injector-source/part-*.b64 > .ci/injector.b64
+          base64 --decode .ci/injector.b64 > .ci/injector.zip
+          echo "${SOURCE_SHA256}  .ci/injector.zip" | sha256sum --check -
+          test "$(stat -c%s .ci/injector.zip)" -eq 29919
+          unzip -t .ci/injector.zip
+          unzip -q .ci/injector.zip -d .
+          test -f BlockmateAPKInjector/app/build.gradle
+          test -f BlockmateAPKInjector/patchdex/src/main/java/com/blockmate/injected/AiActivity.java
+
+      - name: Build Android-compatible Apktool engine
+        working-directory: BlockmateAPKInjector
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch v1.0.0 https://github.com/anirudhmalik/apktool-android.git _deps/apktool-android
+          cd _deps/apktool-android
+          ./gradlew --no-daemon :brut.apktool:apktool-android:assembleRelease :brut.apktool:apktool-android:collectRuntimeJars
+          cd "$GITHUB_WORKSPACE/BlockmateAPKInjector"
+          mkdir -p app/libs/apktool/runtime
+          cp _deps/apktool-android/brut.apktool/apktool-android/build/outputs/aar/apktool-android-release.aar app/libs/apktool-android-1.0.0.aar
+          cp _deps/apktool-android/brut.apktool/apktool-android/build/libs-bundle/*.jar app/libs/apktool/runtime/
+          test -s app/libs/apktool-android-1.0.0.aar
+          test "$(find app/libs/apktool/runtime -name '*.jar' | wc -l)" -gt 5
+
+      - name: Build patch payload DEX
+        working-directory: BlockmateAPKInjector
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle --no-daemon :patchdex:assembleDebug
+          mkdir -p app/src/main/assets/patch
+          unzip -p patchdex/build/outputs/apk/debug/patchdex-debug.apk classes.dex > app/src/main/assets/patch/classes.dex
+          test -s app/src/main/assets/patch/classes.dex
+          sha256sum app/src/main/assets/patch/classes.dex
+
+      - name: Build injector APK
+        working-directory: BlockmateAPKInjector
+        run: gradle --no-daemon :app:assembleDebug
+
+      - name: Verify APK
+        working-directory: BlockmateAPKInjector
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          test -s "$APK"
+          unzip -t "$APK"
+          "$ANDROID_HOME/build-tools/${BUILD_TOOLS}/apksigner" verify --verbose "$APK"
+          sha256sum "$APK" | tee injector.sha256
+          ls -lh "$APK"
+
+      - name: Upload CI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Blockmate-APK-Injector-0.1.0
+          path: |
+            BlockmateAPKInjector/app/build/outputs/apk/debug/app-debug.apk
+            BlockmateAPKInjector/injector.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish GitHub prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: apk-injector-v0.1.0
+          name: Blockmate APK Injector v0.1.0
+          target_commitish: feature/apk-injector
+          prerelease: true
+          draft: false
+          make_latest: false
+          overwrite_files: true
+          files: |
+            BlockmateAPKInjector/app/build/outputs/apk/debug/app-debug.apk
+            BlockmateAPKInjector/injector.sha256
