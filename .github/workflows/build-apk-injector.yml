@@ -68,7 +68,7 @@ jobs:
           grep -q "registerActivityLifecycleCallbacks" BlockmateAPKInjector/patchdex/src/main/java/com/blockmate/injected/InitProvider.java
           grep -q "copyPatchDexAssets" BlockmateAPKInjector/app/src/main/java/com/fzdff/apkpatcher/MinecraftPatcher.java
           grep -q "requireAnyEntryContains" BlockmateAPKInjector/app/src/main/java/com/fzdff/apkpatcher/MinecraftPatcher.java
-          grep -q "versionName .0.1.2." BlockmateAPKInjector/app/build.gradle
+          grep -q "versionName .0.1.3." BlockmateAPKInjector/app/build.gradle
           python3 - <<'PY'
           from pathlib import Path
           p = Path("BlockmateAPKInjector/app/build.gradle")
