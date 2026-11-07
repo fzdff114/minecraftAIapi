@@ -15,7 +15,7 @@ env:
   JAVA_VERSION: "17"
   ANDROID_PLATFORM: "35"
   BUILD_TOOLS: "35.0.0"
-  SOURCE_SHA256: "cf1b2a92fc3df135e81fd3d867cee9009142acf5e844756fcfb06741adfa8549"
+  SOURCE_SHA256: "30610a50dee53c98efcfb2f371409f2007af825ab0be507ee33134bb20452a46"
 
 jobs:
   build:
@@ -66,6 +66,8 @@ jobs:
           grep -q "configureSecureXmlFactory" BlockmateAPKInjector/app/src/main/java/com/fzdff/apkpatcher/MinecraftPatcher.java
           grep -q "InitProvider" BlockmateAPKInjector/app/src/main/java/com/fzdff/apkpatcher/MinecraftPatcher.java
           grep -q "registerActivityLifecycleCallbacks" BlockmateAPKInjector/patchdex/src/main/java/com/blockmate/injected/InitProvider.java
+          grep -q "copyPatchDexAssets" BlockmateAPKInjector/app/src/main/java/com/fzdff/apkpatcher/MinecraftPatcher.java
+          grep -q "requireAnyEntryContains" BlockmateAPKInjector/app/src/main/java/com/fzdff/apkpatcher/MinecraftPatcher.java
           grep -q "versionName .0.1.2." BlockmateAPKInjector/app/build.gradle
           python3 - <<'PY'
           from pathlib import Path
@@ -95,16 +97,56 @@ jobs:
           test -s app/libs/apktool-android-1.0.0.aar
           test "$(find app/libs/apktool/runtime -name '*.jar' | wc -l)" -gt 5
 
-      - name: Build patch payload DEX
+      - name: Build and extract real patch DEX files
         working-directory: BlockmateAPKInjector
         shell: bash
         run: |
           set -euo pipefail
           gradle --no-daemon :patchdex:assembleDebug
           mkdir -p app/src/main/assets/patch
-          unzip -p patchdex/build/outputs/apk/debug/patchdex-debug.apk classes.dex > app/src/main/assets/patch/classes.dex
-          test -s app/src/main/assets/patch/classes.dex
-          sha256sum app/src/main/assets/patch/classes.dex
+          python3 - <<'PY'
+          import re
+          import zipfile
+          from pathlib import Path
+
+          apk = Path("patchdex/build/outputs/apk/debug/patchdex-debug.apk")
+          out = Path("app/src/main/assets/patch")
+          required = [
+              b"Lcom/blockmate/injected/InitProvider;",
+              b"Lcom/blockmate/injected/AiActivity;",
+              b"Lcom/blockmate/injected/OverlayHook;",
+          ]
+          for old in out.glob("classes*.dex"):
+              old.unlink()
+          with zipfile.ZipFile(apk) as z:
+              names = [n for n in z.namelist() if re.fullmatch(r"classes(?:[0-9]+)?\.dex", n)]
+              names.sort(key=lambda n: 1 if n == "classes.dex" else int(re.search(r"classes([0-9]+)", n).group(1)))
+              valid = []
+              print("Patch APK DEX inventory:")
+              for name in names:
+                  data = z.read(name)
+                  magic_ok = data.startswith(b"dex\n")
+                  print(f"  {name}: {len(data)} bytes, dex_magic={magic_ok}")
+                  # Empty placeholder DEX files are deliberately ignored.
+                  if len(data) >= 1024 and magic_ok:
+                      valid.append((name, data))
+          if not valid:
+              raise SystemExit("No non-empty DEX files in patchdex-debug.apk")
+          combined = b"".join(data for _, data in valid)
+          missing = [m.decode() for m in required if m not in combined]
+          if missing:
+              raise SystemExit("Patch DEX missing required class descriptors: " + ", ".join(missing))
+          for i, (source_name, data) in enumerate(valid, 1):
+              destination = out / ("classes.dex" if i == 1 else f"classes{i}.dex")
+              destination.write_bytes(data)
+              print(f"Embedded {source_name} -> {destination.name}: {len(data)} bytes")
+          (Path("patchdex-dex-inventory.txt")).write_text(
+              "\n".join(f"{src} -> classes{' ' if i == 1 else i}.dex: {len(data)} bytes"
+                           for i, (src, data) in enumerate(valid, 1)) + "\n"
+          )
+          PY
+          test "$(find app/src/main/assets/patch -maxdepth 1 -name 'classes*.dex' -type f | wc -l)" -gt 0
+          sha256sum app/src/main/assets/patch/classes*.dex
 
       - name: Build injector APK
         working-directory: BlockmateAPKInjector
@@ -118,6 +160,29 @@ jobs:
           APK=app/build/outputs/apk/debug/app-debug.apk
           test -s "$APK"
           unzip -t "$APK"
+          python3 - <<'PY'
+          import re, zipfile
+          apk = "app/build/outputs/apk/debug/app-debug.apk"
+          required = [
+              b"Lcom/blockmate/injected/InitProvider;",
+              b"Lcom/blockmate/injected/AiActivity;",
+              b"Lcom/blockmate/injected/OverlayHook;",
+          ]
+          with zipfile.ZipFile(apk) as z:
+              names = [n for n in z.namelist() if re.fullmatch(r"assets/patch/classes(?:[0-9]+)?\.dex", n)]
+              if not names:
+                  raise SystemExit("Final injector APK has no embedded patch DEX assets")
+              payload = b""
+              for n in names:
+                  data = z.read(n)
+                  if len(data) < 1024 or not data.startswith(b"dex\n"):
+                      raise SystemExit(f"Invalid packaged DEX asset {n}: {len(data)} bytes")
+                  print(f"Verified asset {n}: {len(data)} bytes")
+                  payload += data
+              missing = [m.decode() for m in required if m not in payload]
+              if missing:
+                  raise SystemExit("Final APK missing injected classes: " + ", ".join(missing))
+          PY
           "$ANDROID_HOME/build-tools/${BUILD_TOOLS}/apksigner" verify --verbose "$APK"
           sha256sum "$APK" | tee injector.sha256
           ls -lh "$APK"
@@ -125,18 +190,20 @@ jobs:
       - name: Upload CI artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Blockmate-APK-Injector-0.1.2
+          name: Blockmate-APK-Injector-0.1.3
           path: |
             BlockmateAPKInjector/app/build/outputs/apk/debug/app-debug.apk
             BlockmateAPKInjector/injector.sha256
+            BlockmateAPKInjector/patchdex-dex-inventory.txt
+            BlockmateAPKInjector/patchdex/build/outputs/apk/debug/patchdex-debug.apk
           if-no-files-found: error
           retention-days: 30
 
       - name: Publish GitHub prerelease
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: apk-injector-v0.1.2
-          name: Blockmate APK Injector v0.1.2
+          tag_name: apk-injector-v0.1.3
+          name: Blockmate APK Injector v0.1.3
           target_commitish: feature/apk-injector
           prerelease: true
           draft: false
