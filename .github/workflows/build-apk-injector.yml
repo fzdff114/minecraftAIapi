@@ -15,7 +15,7 @@ env:
   JAVA_VERSION: "17"
   ANDROID_PLATFORM: "35"
   BUILD_TOOLS: "35.0.0"
-  SOURCE_SHA256: "3ac170ce6857f62f359b47c7f0aa42e696abc69b757f9bc003a7fa44991d11e7"
+  SOURCE_SHA256: "cf1b2a92fc3df135e81fd3d867cee9009142acf5e844756fcfb06741adfa8549"
 
 jobs:
   build:
@@ -58,12 +58,15 @@ jobs:
           cat tools/injector-source/part-*.b64 > .ci/injector.b64
           base64 --decode .ci/injector.b64 > .ci/injector.zip
           echo "${SOURCE_SHA256}  .ci/injector.zip" | sha256sum --check -
-          test "$(stat -c%s .ci/injector.zip)" -eq 30769
+          test "$(stat -c%s .ci/injector.zip)" -eq 32553
           unzip -t .ci/injector.zip
           unzip -q .ci/injector.zip -d .
           test -f BlockmateAPKInjector/app/build.gradle
           test -f BlockmateAPKInjector/patchdex/src/main/java/com/blockmate/injected/AiActivity.java
           grep -q "configureSecureXmlFactory" BlockmateAPKInjector/app/src/main/java/com/fzdff/apkpatcher/MinecraftPatcher.java
+          grep -q "InitProvider" BlockmateAPKInjector/app/src/main/java/com/fzdff/apkpatcher/MinecraftPatcher.java
+          grep -q "registerActivityLifecycleCallbacks" BlockmateAPKInjector/patchdex/src/main/java/com/blockmate/injected/InitProvider.java
+          grep -q "versionName .0.1.2." BlockmateAPKInjector/app/build.gradle
           python3 - <<'PY'
           from pathlib import Path
           p = Path("BlockmateAPKInjector/app/build.gradle")
@@ -122,7 +125,7 @@ jobs:
       - name: Upload CI artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Blockmate-APK-Injector-0.1.1
+          name: Blockmate-APK-Injector-0.1.2
           path: |
             BlockmateAPKInjector/app/build/outputs/apk/debug/app-debug.apk
             BlockmateAPKInjector/injector.sha256
@@ -132,8 +135,8 @@ jobs:
       - name: Publish GitHub prerelease
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: apk-injector-v0.1.1
-          name: Blockmate APK Injector v0.1.1
+          tag_name: apk-injector-v0.1.2
+          name: Blockmate APK Injector v0.1.2
           target_commitish: feature/apk-injector
           prerelease: true
           draft: false
