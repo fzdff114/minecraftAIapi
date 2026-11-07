@@ -1,0 +1,139 @@
+name: Restore Minecraft 1.26.60 MCB binaries to JSON
+
+on:
+  push:
+    branches: ["feature/mcb-json-restore"]
+    paths:
+      - "tools/mcb-json-restore/**"
+      - ".github/workflows/restore-mcb-json.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout input files
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Build schema-driven MCB decoder
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/LPaicen/brarchive-extractor.git brarchive-extractor
+          cd brarchive-extractor
+          npm ci
+          npm run build
+
+      - name: Get matching Bedrock Dedicated Server schemas
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch stable-1.26.60 https://github.com/Bedrock-APIs/bds-docs.git bds-schema
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          info = json.loads(Path("bds-schema/exist.json").read_text())
+          version = info.get("version")
+          build = info.get("build-version")
+          print(f"BDS schema export: version={version}, build={build}")
+          if version != "1.26.60":
+              raise SystemExit(f"Unexpected BDS schema version: {version}")
+          schema_root = Path("bds-schema/metadata/json_schemas")
+          if not schema_root.is_dir():
+              raise SystemExit("BDS schema export has no metadata/json_schemas directory")
+          count = sum(1 for p in schema_root.rglob("*.json"))
+          print(f"Loaded schema files: {count}")
+          if count < 100:
+              raise SystemExit("Schema export looks incomplete")
+          PY
+
+      - name: Restore MCB files
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+          source = Path("tools/mcb-json-restore/source-mcb.zip")
+          with ZipFile(source) as z:
+              bad = z.testzip()
+              if bad:
+                  raise SystemExit(f"Corrupt input archive: {bad}")
+              z.extractall("mcb-input")
+          files = sorted(Path("mcb-input").rglob("*.json"))
+          if len(files) != 6:
+              raise SystemExit(f"Expected exactly 6 MCB input files, found {len(files)}")
+          for p in files:
+              data = p.read_bytes()
+              if not data.startswith(b"\x7fMCB"):
+                  raise SystemExit(f"Input is not MCB: {p}")
+              print(f"Input MCB: {p} ({len(data)} bytes)")
+          PY
+          node brarchive-extractor/dist/src/cli.js "$GITHUB_WORKSPACE/mcb-input" --directory --schema "$GITHUB_WORKSPACE/bds-schema" --output "$GITHUB_WORKSPACE/restored" --json-format pretty --list-all --verbose
+
+      - name: Validate all six restored JSON documents
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          import zipfile
+          import hashlib
+
+          source = Path("mcb-input")
+          output = Path("restored")
+          input_files = sorted(source.rglob("*.json"))
+          expected = {p.relative_to(source).as_posix() for p in input_files}
+          output_files = sorted(output.rglob("*.json"))
+          actual = {p.relative_to(output).as_posix() for p in output_files}
+          missing = sorted(expected - actual)
+          extra = sorted(actual - expected)
+          if missing or extra:
+              raise SystemExit(f"Output file set mismatch; missing={missing}, extra={extra}")
+          rows = []
+          for rel in sorted(expected):
+              path = output / rel
+              data = path.read_bytes()
+              if data.startswith(b"\x7fMCB"):
+                  raise SystemExit(f"MCB was not decoded: {rel}")
+              value = json.loads(data.decode("utf-8"))
+              if not isinstance(value, dict):
+                  raise SystemExit(f"Decoded root is not a JSON object: {rel}")
+              rows.append((rel, len(data), hashlib.sha256(data).hexdigest(), value.get("format_version"), list(value.keys())[:5]))
+              print(f"JSON OK: {rel} ({len(data)} bytes), keys={list(value.keys())[:5]}")
+          report = [
+              "Minecraft Bedrock 1.26.60 MCB restoration",
+              "Schema source: Bedrock-APIs/bds-docs stable-1.26.60",
+              "Decoder: LPaicen/brarchive-extractor",
+              "",
+              "All 6 source MCB files were parsed as UTF-8 JSON and validated.",
+              "",
+          ]
+          for rel, size, digest, version, keys in rows:
+              report.append(f"- {rel}: {size} bytes; format_version={version}; keys={keys}; sha256={digest}")
+          Path("MCB_JSON_RESTORE_REPORT.txt").write_text("\n".join(report) + "\n", encoding="utf-8")
+          with zipfile.ZipFile("Minecraft_26.60_MCB_JSON_Restored.zip", "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
+              for p in output.rglob("*.json"):
+                  z.write(p, p.relative_to(output).as_posix())
+              z.write("MCB_JSON_RESTORE_REPORT.txt")
+          PY
+
+      - name: Upload restored JSON files
+        uses: actions/upload-artifact@v4
+        with:
+          name: Minecraft-26.60-MCB-JSON-Restored
+          path: |
+            Minecraft_26.60_MCB_JSON_Restored.zip
+            MCB_JSON_RESTORE_REPORT.txt
+          if-no-files-found: error
+          retention-days: 30
