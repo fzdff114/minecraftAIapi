@@ -58,7 +58,7 @@ jobs:
           cat tools/injector-source/part-*.b64 > .ci/injector.b64
           base64 --decode .ci/injector.b64 > .ci/injector.zip
           echo "${SOURCE_SHA256}  .ci/injector.zip" | sha256sum --check -
-          test "$(stat -c%s .ci/injector.zip)" -eq 32553
+          test "$(stat -c%s .ci/injector.zip)" -eq 33482
           unzip -t .ci/injector.zip
           unzip -q .ci/injector.zip -d .
           test -f BlockmateAPKInjector/app/build.gradle
