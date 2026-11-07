@@ -61,24 +61,51 @@ jobs:
         run: |
           set -euo pipefail
           python3 - <<'PY'
+          import struct
           from pathlib import Path
           from zipfile import ZipFile
-          source = Path("tools/mcb-json-restore/source-mcb.zip")
-          with ZipFile(source) as z:
+
+          work = Path(".mcb-work")
+          work.mkdir(exist_ok=True)
+          source_zip = Path("tools/mcb-json-restore/source-mcb.zip")
+          with ZipFile(source_zip) as z:
               bad = z.testzip()
               if bad:
                   raise SystemExit(f"Corrupt input archive: {bad}")
-              z.extractall("mcb-input")
-          files = sorted(Path("mcb-input").rglob("*.json"))
+              z.extractall(work / "source")
+
+          source_root = work / "source" / "mcb-input"
+          files = sorted(source_root.rglob("*.json"))
           if len(files) != 6:
               raise SystemExit(f"Expected exactly 6 MCB input files, found {len(files)}")
-          for p in files:
-              data = p.read_bytes()
+
+          entries = []
+          payloads = []
+          offset = 0
+          for path in files:
+              data = path.read_bytes()
               if not data.startswith(b"\x7fMCB"):
-                  raise SystemExit(f"Input is not MCB: {p}")
-              print(f"Input MCB: {p} ({len(data)} bytes)")
+                  raise SystemExit(f"Input is not MCB: {path}")
+              name = path.relative_to(source_root).as_posix().encode("utf-8")
+              if not name or len(name) > 247:
+                  raise SystemExit(f"Invalid brarchive entry name: {name!r}")
+              record = bytes([len(name)]) + name + bytes(247 - len(name))
+              record += struct.pack("<II", offset, len(data))
+              if len(record) != 256:
+                  raise SystemExit("Internal brarchive record size mismatch")
+              entries.append(record)
+              payloads.append(data)
+              print(f"Input MCB: {name.decode()} ({len(data)} bytes)")
+              offset += len(data)
+
+          # Wrap unchanged MCB payloads in a minimal, valid brarchive v1.
+          magic = 0x267052A0B125277D
+          header = struct.pack("<QII", magic, len(entries), 1)
+          archive = work / "mcb-input.brarchive"
+          archive.write_bytes(header + b"".join(entries) + b"".join(payloads))
+          print(f"Built temporary brarchive: {archive} ({archive.stat().st_size} bytes)")
           PY
-          node brarchive-extractor/dist/src/cli.js "$GITHUB_WORKSPACE/mcb-input" --directory --schema "$GITHUB_WORKSPACE/bds-schema" --output "$GITHUB_WORKSPACE/restored" --json-format pretty --list-all --verbose
+          node brarchive-extractor/dist/src/cli.js "$GITHUB_WORKSPACE/.mcb-work/mcb-input.brarchive" --schema "$GITHUB_WORKSPACE/bds-schema" --in-place --json-format pretty --list-all --verbose
 
       - name: Validate all six restored JSON documents
         shell: bash
@@ -90,8 +117,8 @@ jobs:
           import zipfile
           import hashlib
 
-          source = Path("mcb-input")
-          output = Path("restored")
+          source = Path(".mcb-work/source/mcb-input")
+          output = Path(".mcb-work/mcb-input")
           input_files = sorted(source.rglob("*.json"))
           expected = {p.relative_to(source).as_posix() for p in input_files}
           output_files = sorted(output.rglob("*.json"))
