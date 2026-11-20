@@ -1,0 +1,70 @@
+name: Build Minecraft 26.62 AI runtime
+
+on:
+  push:
+    branches:
+      - mc-26.62-ai-integration-2026-11
+    paths:
+      - .github/workflows/build-26.62-ai-runtime.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: minecraft-26.62-ai-runtime
+  cancel-in-progress: true
+
+jobs:
+  build-runtime-aar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout integration branch
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle 8.11.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK, NDK and CMake
+        run: |
+          sdkmanager --install \
+            "platforms;android-35" \
+            "build-tools;35.0.0" \
+            "ndk;27.2.12479018" \
+            "cmake;3.22.1"
+
+      - name: Decode source archive
+        run: |
+          mkdir -p workspace
+          base64 --decode source/Minecraft-26.62-AI-Integration-source.tar.xz.b64 > workspace/source.tar.xz
+          tar -tJf workspace/source.tar.xz >/dev/null
+          tar -xJf workspace/source.tar.xz -C workspace
+          test -f workspace/Minecraft-26.62-AI-Integration/app/build.gradle.kts
+
+      - name: Run action protocol tests
+        working-directory: workspace/Minecraft-26.62-AI-Integration
+        run: python3 tests/test_action_protocol.py
+
+      - name: Build Android runtime AAR
+        working-directory: workspace/Minecraft-26.62-AI-Integration
+        run: gradle --no-daemon :app:assembleRelease
+
+      - name: Upload AAR artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: minecraft-26.62-ai-runtime-aar
+          path: workspace/Minecraft-26.62-AI-Integration/app/build/outputs/aar/*.aar
+          if-no-files-found: error
+          retention-days: 30
